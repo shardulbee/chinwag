@@ -1,6 +1,6 @@
-# Sharpi Transcribe
+# Chinwag
 
-A private macOS menu-bar dictation app and resident local speech-to-text service. This is a
+A private macOS menu-bar dictation app and resident local speech-to-text service. Chinwag is a
 standalone project: it does not run inside, import, deploy, or restart the Sharpi Host.
 
 The engine keeps Cohere Transcribe 03-2026 Q4 resident on Apple Metal and exposes one
@@ -25,7 +25,7 @@ chmod 600 .env
 Set the absolute model path in `.env`:
 
 ```sh
-TRANSCRIBE_MODEL="$HOME/.local/share/sharpi-transcribe/models/cohere-transcribe-03-2026-Q4_K_M.gguf"
+TRANSCRIBE_MODEL="$HOME/.local/share/chinwag/models/cohere-transcribe-03-2026-Q4_K_M.gguf"
 # TRANSCRIPTION_PORT=3212
 # AFCONVERT_PATH=/usr/bin/afconvert
 # TRANSCRIBE_SIGNING_IDENTITY=Apple Development certificate hash or name
@@ -43,13 +43,13 @@ npm run build
 npm run install:mac
 ```
 
-Installation builds and signs `dist/Sharpi Transcribe.app`, copies it to `~/Applications`, installs
-a launch-safe production runtime under `~/.local/share/sharpi-transcribe/runtime`, and starts two
+Installation builds and signs `dist/Chinwag.app`, copies it to `~/Applications`, installs a
+launch-safe production runtime under `~/.local/share/chinwag/runtime`, and starts two
 per-user LaunchAgents. The source repository stays in `~/Documents`; launchd cannot execute code
 directly from that macOS-protected folder.
 
-- `com.sharpi.transcribe.service` keeps the model resident even when the menu app quits.
-- `com.sharpi.transcribe.menu` starts the visible accessory app at login.
+- `com.shardul.chinwag.service` keeps the model resident even when the menu app quits.
+- `com.shardul.chinwag.menu` starts the visible accessory app at login.
 
 The first launch opens Settings but does not trigger permission prompts. Use the buttons there to
 request **Microphone** and **Accessibility** access. The default push-to-talk shortcut is
@@ -60,7 +60,7 @@ npm run status
 npm run uninstall:mac
 ```
 
-Logs are stored in `~/.local/state/sharpi-transcribe/`.
+Logs are stored in `~/.local/state/chinwag/`.
 
 ## HTTP API
 

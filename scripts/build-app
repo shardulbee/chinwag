@@ -10,12 +10,12 @@ elif [[ -n "${1:-}" ]]; then
   exit 2
 fi
 
-app="$root/dist/Sharpi Transcribe.app"
+app="$root/dist/Chinwag.app"
 contents="$app/Contents"
-executable="$contents/MacOS/SharpiTranscribe"
+executable="$contents/MacOS/Chinwag"
 rm -rf "$app"
 mkdir -p "$contents/MacOS"
-cp "$root/macos/SharpiTranscribe/Info.plist" "$contents/Info.plist"
+cp "$root/macos/Chinwag/Info.plist" "$contents/Info.plist"
 plutil -lint "$contents/Info.plist" >/dev/null
 
 arch="$(uname -m)"
@@ -26,7 +26,7 @@ else
   compile_flags+=(-O)
 fi
 
-sources=("$root"/macos/SharpiTranscribe/*.swift)
+sources=("$root"/macos/Chinwag/*.swift)
 xcrun swiftc \
   "${compile_flags[@]}" \
   -framework AppKit \

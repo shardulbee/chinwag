@@ -4,7 +4,7 @@ import SwiftUI
 
 @main
 @MainActor
-struct SharpiTranscribeMain {
+struct ChinwagMain {
     static func main() {
         let application = NSApplication.shared
         let delegate = AppDelegate()
@@ -61,7 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func configureStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        statusItem.autosaveName = "SharpiTranscribe"
+        statusItem.autosaveName = "Chinwag"
         guard let button = statusItem.button else { return }
         button.target = self
         button.action = #selector(togglePopover)
@@ -86,12 +86,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let button = statusItem?.button else { return }
         let image = NSImage(
             systemSymbolName: state.statusSymbol,
-            accessibilityDescription: "Sharpi Transcribe: \(state.statusTitle)")
+            accessibilityDescription: "Chinwag: \(state.statusTitle)")
         image?.isTemplate = state.activity != .recording
         button.image = image
         button.contentTintColor = state.activity == .recording ? .systemRed : nil
-        button.toolTip = "Sharpi Transcribe — \(state.statusTitle)"
-        button.setAccessibilityLabel("Sharpi Transcribe: \(state.statusTitle)")
+        button.toolTip = "Chinwag — \(state.statusTitle)"
+        button.setAccessibilityLabel("Chinwag: \(state.statusTitle)")
 
         let shouldBreathe = state.engineState == "loading" && state.activity == .idle
         if shouldBreathe, loadingTimer == nil {
@@ -134,7 +134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     permissions: permissions,
                     hotKey: hotKey))
             let window = NSWindow(contentViewController: controller)
-            window.title = "Sharpi Transcribe"
+            window.title = "Chinwag"
             window.styleMask = [.closable, .miniaturizable, .titled]
             window.setContentSize(NSSize(width: 500, height: 420))
             window.minSize = NSSize(width: 500, height: 420)

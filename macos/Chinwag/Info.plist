@@ -5,15 +5,15 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>Sharpi Transcribe</string>
+    <string>Chinwag</string>
     <key>CFBundleExecutable</key>
-    <string>SharpiTranscribe</string>
+    <string>Chinwag</string>
     <key>CFBundleIdentifier</key>
-    <string>com.sharpi.transcribe</string>
+    <string>com.shardul.chinwag</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>
-    <string>Sharpi Transcribe</string>
+    <string>Chinwag</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -32,7 +32,7 @@
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
-    <string>Sharpi Transcribe records audio while you hold your dictation shortcut.</string>
+    <string>Chinwag records audio while you hold your dictation shortcut.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

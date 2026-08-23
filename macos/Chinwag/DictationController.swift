@@ -53,13 +53,8 @@ struct DictationHUDView: View {
         }
         .font(.system(size: 13, weight: .medium))
         .padding(.horizontal, 18)
-        .frame(width: 340)
-        .frame(minHeight: 56)
-        .background {
-            Capsule()
-                .fill(Color(nsColor: .windowBackgroundColor))
-                .shadow(color: .black.opacity(0.16), radius: 12, y: 5)
-        }
+        .frame(width: 340, height: 56)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -76,7 +71,7 @@ final class HUDController {
     init(appState: AppState) {
         model = HUDModel(appState: appState)
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 80),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 56),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
@@ -88,11 +83,12 @@ final class HUDController {
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
         let hostingView = TransparentHostingView(
-            rootView: DictationHUDView(model: model, appState: appState)
-                .frame(width: 360, height: 80))
+            rootView: DictationHUDView(model: model, appState: appState))
         hostingView.wantsLayer = true
         hostingView.layer?.isOpaque = false
-        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingView.layer?.cornerCurve = .continuous
+        hostingView.layer?.cornerRadius = 28
+        hostingView.layer?.masksToBounds = true
         panel.contentView = hostingView
     }
 

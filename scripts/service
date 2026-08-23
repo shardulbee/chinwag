@@ -3,13 +3,13 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="${TRANSCRIBE_ENV_FILE:-$root/.env}"
-engine_label="com.sharpi.transcribe.service"
-menu_label="com.sharpi.transcribe.menu"
+engine_label="com.shardul.chinwag.service"
+menu_label="com.shardul.chinwag.menu"
 engine_plist="$HOME/Library/LaunchAgents/$engine_label.plist"
 menu_plist="$HOME/Library/LaunchAgents/$menu_label.plist"
-state_dir="${TRANSCRIBE_STATE_DIR:-$HOME/.local/state/sharpi-transcribe}"
-runtime_dir="${TRANSCRIBE_RUNTIME_DIR:-$HOME/.local/share/sharpi-transcribe/runtime}"
-installed_app="${TRANSCRIBE_APP_PATH:-$HOME/Applications/Sharpi Transcribe.app}"
+state_dir="${TRANSCRIBE_STATE_DIR:-$HOME/.local/state/chinwag}"
+runtime_dir="${TRANSCRIBE_RUNTIME_DIR:-$HOME/.local/share/chinwag/runtime}"
+installed_app="${TRANSCRIBE_APP_PATH:-$HOME/Applications/Chinwag.app}"
 
 usage() {
   echo "Usage: scripts/service {run|install|status|uninstall}" >&2
@@ -93,7 +93,7 @@ install_agents() {
     exit 1
   }
   [[ -d "$root/node_modules/transcribe-cpp" ]] || {
-    echo "Run npm ci before installing Sharpi Transcribe" >&2
+    echo "Run npm ci before installing Chinwag" >&2
     exit 1
   }
 
@@ -121,7 +121,7 @@ install_agents() {
 
   TRANSCRIBE_SIGNING_IDENTITY="$signing_identity" "$root/scripts/build-app"
   rm -rf "$installed_app"
-  ditto "$root/dist/Sharpi Transcribe.app" "$installed_app"
+  ditto "$root/dist/Chinwag.app" "$installed_app"
 
   new_plist "$engine_plist"
   plist_string "$engine_plist" Label "$engine_label"
@@ -144,7 +144,7 @@ install_agents() {
 
   new_plist "$menu_plist"
   plist_string "$menu_plist" Label "$menu_label"
-  plist_array "$menu_plist" ProgramArguments "$installed_app/Contents/MacOS/SharpiTranscribe"
+  plist_array "$menu_plist" ProgramArguments "$installed_app/Contents/MacOS/Chinwag"
   plist_bool "$menu_plist" RunAtLoad true
   plist_string "$menu_plist" ProcessType Interactive
   plist_string "$menu_plist" LimitLoadToSessionType Aqua
@@ -213,7 +213,7 @@ uninstall_agents() {
   launchctl bootout "$domain/$menu_label" 2>/dev/null || true
   rm -f "$engine_plist" "$menu_plist"
   rm -rf "$installed_app" "$runtime_dir"
-  echo "Removed the Sharpi Transcribe LaunchAgents, runtime, and menu-bar app"
+  echo "Removed the Chinwag LaunchAgents, runtime, and menu-bar app"
 }
 
 case "${1:-}" in

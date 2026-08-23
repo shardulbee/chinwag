@@ -228,7 +228,7 @@ export async function decodeAudioToPcm(
 
   let directory: string | undefined;
   try {
-    directory = await mkdtemp(join(tmpdir(), "sharpi-transcribe-decode-"));
+    directory = await mkdtemp(join(tmpdir(), "chinwag-decode-"));
     await chmod(directory, 0o700);
     const inputPath = join(directory, `input.${extension}`);
     const decodedPath = join(directory, "decoded.wav");

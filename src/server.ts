@@ -89,7 +89,7 @@ function log(
     ts: new Date().toISOString(),
     level,
     event,
-    service: "sharpi-transcribe",
+    service: "chinwag",
     pid: process.pid,
   });
   if (level === "error") console.error(line);
