@@ -44,17 +44,30 @@ struct DictationHUDView: View {
                 Text("Copied — paste with ⌘V")
             case let .error(message):
                 Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                Text(message).lineLimit(1)
+                Text(message)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             case .hidden:
                 EmptyView()
             }
         }
         .font(.system(size: 13, weight: .medium))
-        .padding(.horizontal, 16)
-        .frame(minWidth: 176, minHeight: 52)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().stroke(.white.opacity(0.16), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.2), radius: 14, y: 6)
+        .padding(.horizontal, 18)
+        .frame(width: 340)
+        .frame(minHeight: 56)
+        .modifier(HUDSurface())
+        .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+    }
+}
+
+private struct HUDSurface: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: Capsule())
+        } else {
+            content.background(.ultraThinMaterial, in: Capsule())
+        }
     }
 }
 
@@ -67,7 +80,7 @@ final class HUDController {
     init(appState: AppState) {
         model = HUDModel(appState: appState)
         panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 260, height: 72),
+            contentRect: NSRect(x: 0, y: 0, width: 360, height: 80),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false)
@@ -77,9 +90,23 @@ final class HUDController {
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
-        panel.contentView = NSHostingView(
-            rootView: DictationHUDView(model: model, appState: appState))
+        panel.ignoresMouseEvents = true
+        let hostingView = NSHostingView(
+            rootView: DictationHUDView(model: model, appState: appState)
+                .frame(width: 360, height: 80))
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = hostingView
     }
+
+    #if DEBUG
+    var fixtureContentView: NSView? { panel.contentView }
+    var fixtureWindowNumber: Int { panel.windowNumber }
+
+    func allowFixtureCapture() {
+        panel.sharingType = .readOnly
+    }
+    #endif
 
     func show(_ mode: DictationHUDState, on screen: NSScreen? = nil) {
         dismissTask?.cancel()
@@ -270,6 +297,16 @@ final class DictationController {
         }
         return true
     }
+
+    #if DEBUG
+    var fixtureHUDContentView: NSView? { hud.fixtureContentView }
+    var fixtureHUDWindowNumber: Int { hud.fixtureWindowNumber }
+
+    func showHUDFixture() {
+        hud.allowFixtureCapture()
+        hud.show(.error("Recording was too short"))
+    }
+    #endif
 
     private func showNotice(_ message: String, error: Bool) {
         noticeID = UUID()

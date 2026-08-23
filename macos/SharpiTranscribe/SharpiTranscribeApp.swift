@@ -175,6 +175,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } else if presentation == "settings" {
                 self.openSettings()
                 self.settingsWindow?.sharingType = .readOnly
+            } else if presentation == "hud" {
+                self.dictation.showHUDFixture()
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 self.writeCaptureMetadata()
@@ -191,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let window = statusItem.button?.window { values["statusWindow"] = window.windowNumber }
         if let window = popover.contentViewController?.view.window { values["popoverWindow"] = window.windowNumber }
         if let window = settingsWindow { values["settingsWindow"] = window.windowNumber }
+        values["hudWindow"] = dictation.fixtureHUDWindowNumber
         if let data = try? JSONSerialization.data(withJSONObject: values, options: [.prettyPrinted]) {
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
         }
@@ -216,6 +219,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
            let view = window.contentView?.superview ?? window.contentView
         {
             capture(view, to: URL(fileURLWithPath: directory).appending(path: "settings.png"))
+        }
+        if presentation == "hud", let view = dictation.fixtureHUDContentView {
+            capture(view, to: URL(fileURLWithPath: directory).appending(path: "hud.png"), scale: 2)
         }
     }
 
