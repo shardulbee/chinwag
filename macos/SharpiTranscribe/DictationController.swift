@@ -55,20 +55,16 @@ struct DictationHUDView: View {
         .padding(.horizontal, 18)
         .frame(width: 340)
         .frame(minHeight: 56)
-        .modifier(HUDSurface())
-        .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+        .background {
+            Capsule()
+                .fill(Color(nsColor: .windowBackgroundColor))
+                .shadow(color: .black.opacity(0.16), radius: 12, y: 5)
+        }
     }
 }
 
-private struct HUDSurface: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 26.0, *) {
-            content.glassEffect(.regular, in: Capsule())
-        } else {
-            content.background(.ultraThinMaterial, in: Capsule())
-        }
-    }
+private final class TransparentHostingView<Content: View>: NSHostingView<Content> {
+    override var isOpaque: Bool { false }
 }
 
 @MainActor
@@ -91,10 +87,11 @@ final class HUDController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = true
-        let hostingView = NSHostingView(
+        let hostingView = TransparentHostingView(
             rootView: DictationHUDView(model: model, appState: appState)
                 .frame(width: 360, height: 80))
         hostingView.wantsLayer = true
+        hostingView.layer?.isOpaque = false
         hostingView.layer?.backgroundColor = NSColor.clear.cgColor
         panel.contentView = hostingView
     }
