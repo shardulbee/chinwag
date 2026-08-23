@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+env_file="${TRANSCRIBE_ENV_FILE:-$root/.env}"
+engine_label="com.sharpi.transcribe.service"
+menu_label="com.sharpi.transcribe.menu"
+engine_plist="$HOME/Library/LaunchAgents/$engine_label.plist"
+menu_plist="$HOME/Library/LaunchAgents/$menu_label.plist"
+state_dir="${TRANSCRIBE_STATE_DIR:-$HOME/.local/state/sharpi-transcribe}"
+runtime_dir="${TRANSCRIBE_RUNTIME_DIR:-$HOME/.local/share/sharpi-transcribe/runtime}"
+installed_app="${TRANSCRIBE_APP_PATH:-$HOME/Applications/Sharpi Transcribe.app}"
+
+usage() {
+  echo "Usage: scripts/service {run|install|status|uninstall}" >&2
+  exit 2
+}
+
+load_env() {
+  [[ -f "$env_file" && ! -L "$env_file" ]] || {
+    echo "Environment must be a regular non-symlink file: $env_file" >&2
+    return 1
+  }
+  local owner mode links
+  read -r owner mode links < <(stat -f '%u %Lp %l' "$env_file")
+  [[ "$owner" == "$(id -u)" && "$mode" == 600 && "$links" == 1 ]] || {
+    echo "Environment must be owned by the current user, mode 0600, with one link: $env_file" >&2
+    return 1
+  }
+  set -a
+  # shellcheck disable=SC1090
+  source "$env_file"
+  set +a
+  [[ -n "${TRANSCRIBE_MODEL:-}" ]] || {
+    echo "Set TRANSCRIBE_MODEL in $env_file" >&2
+    return 1
+  }
+  AFCONVERT_PATH="${AFCONVERT_PATH:-/usr/bin/afconvert}"
+  TRANSCRIPTION_PORT="${TRANSCRIPTION_PORT:-3212}"
+}
+
+run_service() {
+  load_env
+  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+  local node_bin="${TRANSCRIBE_NODE:-$(command -v node || true)}"
+  if [[ ! -x "$node_bin" ]] && command -v mise >/dev/null 2>&1; then
+    node_bin="$(mise which node 2>/dev/null || true)"
+  fi
+  [[ -x "$node_bin" ]] || {
+    echo "Node is unavailable; set TRANSCRIBE_NODE in $env_file" >&2
+    exit 1
+  }
+  exec env -i \
+    AFCONVERT_PATH="$AFCONVERT_PATH" \
+    HOME="$HOME" \
+    PATH="$PATH" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    TRANSCRIBE_MODEL="$TRANSCRIBE_MODEL" \
+    TRANSCRIPTION_PORT="$TRANSCRIPTION_PORT" \
+    "$node_bin" --experimental-strip-types "$root/src/server.ts"
+}
+
+new_plist() {
+  local path="$1"
+  rm -f "$path"
+  plutil -create xml1 "$path"
+  chmod 600 "$path"
+}
+
+plist_string() {
+  plutil -insert "$2" -string "$3" "$1"
+}
+
+plist_bool() {
+  plutil -insert "$2" -bool "$3" "$1"
+}
+
+plist_array() {
+  local path="$1" key="$2"
+  shift 2
+  plutil -insert "$key" -array "$path"
+  for value in "$@"; do plutil -insert "$key" -string "$value" -append "$path"; done
+}
+
+install_agents() {
+  [[ "$(uname -s)" == "Darwin" ]] || {
+    echo "LaunchAgent installation requires macOS" >&2
+    exit 1
+  }
+  load_env
+  [[ "$TRANSCRIBE_MODEL" == /* && -f "$TRANSCRIBE_MODEL" && -r "$TRANSCRIBE_MODEL" ]] || {
+    echo "TRANSCRIBE_MODEL must be an absolute path to a readable file" >&2
+    exit 1
+  }
+  [[ -d "$root/node_modules/transcribe-cpp" ]] || {
+    echo "Run npm ci before installing Sharpi Transcribe" >&2
+    exit 1
+  }
+
+  local signing_identity="${TRANSCRIBE_SIGNING_IDENTITY:--}"
+
+  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+  local node_bin="${TRANSCRIBE_NODE:-$(command -v node || true)}"
+  if [[ ! -x "$node_bin" ]] && command -v mise >/dev/null 2>&1; then
+    node_bin="$(mise which node 2>/dev/null || true)"
+  fi
+  [[ -x "$node_bin" ]] || {
+    echo "Node is unavailable; set TRANSCRIBE_NODE in $env_file" >&2
+    exit 1
+  }
+  node_bin="$(realpath "$node_bin")"
+
+  mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Applications" "$state_dir"
+  chmod 700 "$state_dir"
+  rm -rf "$runtime_dir"
+  mkdir -p "$runtime_dir/src"
+  chmod 700 "$runtime_dir" "$runtime_dir/src"
+  cp "$root/package.json" "$root/package-lock.json" "$runtime_dir/"
+  cp "$root/src/audio.ts" "$root/src/server.ts" "$runtime_dir/src/"
+  (cd "$runtime_dir" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+
+  TRANSCRIBE_SIGNING_IDENTITY="$signing_identity" "$root/scripts/build-app"
+  rm -rf "$installed_app"
+  ditto "$root/dist/Sharpi Transcribe.app" "$installed_app"
+
+  new_plist "$engine_plist"
+  plist_string "$engine_plist" Label "$engine_label"
+  plist_array "$engine_plist" ProgramArguments \
+    "$node_bin" --experimental-strip-types "$runtime_dir/src/server.ts"
+  plist_string "$engine_plist" WorkingDirectory "$runtime_dir"
+  plist_bool "$engine_plist" RunAtLoad true
+  plist_bool "$engine_plist" KeepAlive true
+  plist_string "$engine_plist" ProcessType Interactive
+  plist_string "$engine_plist" StandardOutPath "$state_dir/service.log"
+  plist_string "$engine_plist" StandardErrorPath "$state_dir/service.log"
+  plutil -insert ThrottleInterval -integer 5 "$engine_plist"
+  plutil -insert EnvironmentVariables -dictionary "$engine_plist"
+  plist_string "$engine_plist" EnvironmentVariables.AFCONVERT_PATH "$AFCONVERT_PATH"
+  plist_string "$engine_plist" EnvironmentVariables.HOME "$HOME"
+  plist_string "$engine_plist" EnvironmentVariables.PATH "$PATH"
+  plist_string "$engine_plist" EnvironmentVariables.TMPDIR "${TMPDIR:-/tmp}"
+  plist_string "$engine_plist" EnvironmentVariables.TRANSCRIBE_MODEL "$TRANSCRIBE_MODEL"
+  plist_string "$engine_plist" EnvironmentVariables.TRANSCRIPTION_PORT "$TRANSCRIPTION_PORT"
+
+  new_plist "$menu_plist"
+  plist_string "$menu_plist" Label "$menu_label"
+  plist_array "$menu_plist" ProgramArguments "$installed_app/Contents/MacOS/SharpiTranscribe"
+  plist_bool "$menu_plist" RunAtLoad true
+  plist_string "$menu_plist" ProcessType Interactive
+  plist_string "$menu_plist" LimitLoadToSessionType Aqua
+  plist_string "$menu_plist" StandardOutPath "$state_dir/menu.log"
+  plist_string "$menu_plist" StandardErrorPath "$state_dir/menu.log"
+  plutil -insert EnvironmentVariables -dictionary "$menu_plist"
+  plist_string "$menu_plist" EnvironmentVariables.TRANSCRIPTION_URL \
+    "http://127.0.0.1:$TRANSCRIPTION_PORT"
+
+  local domain="gui/$(id -u)"
+  launchctl bootout "$domain/$engine_label" 2>/dev/null || true
+  launchctl bootout "$domain/$menu_label" 2>/dev/null || true
+  sleep 1
+  if ! launchctl bootstrap "$domain" "$engine_plist"; then
+    sleep 1
+    launchctl bootstrap "$domain" "$engine_plist"
+  fi
+  if ! launchctl bootstrap "$domain" "$menu_plist"; then
+    sleep 1
+    launchctl bootstrap "$domain" "$menu_plist"
+  fi
+  launchctl kickstart "$domain/$engine_label"
+  launchctl kickstart "$domain/$menu_label"
+
+  local engine_pid health ready=0
+  for _ in {1..60}; do
+    engine_pid="$(launchctl print "$domain/$engine_label" 2>/dev/null \
+      | awk '/^[[:space:]]*pid =/{print $3; exit}')"
+    health="$(curl --silent --max-time 1 \
+      "http://127.0.0.1:$TRANSCRIPTION_PORT/healthz" 2>/dev/null || true)"
+    if [[ -n "$engine_pid" && "$health" == *"\"pid\":$engine_pid"* \
+      && "$health" == *'"state":"ready"'* ]]; then
+      ready=1
+      break
+    fi
+    sleep 0.5
+  done
+  if [[ "$ready" != 1 ]]; then
+    echo "LaunchAgents were installed, but the transcription service did not become ready." >&2
+    echo "Inspect $state_dir/service.log and run scripts/service status." >&2
+    return 1
+  fi
+
+  echo "Installed $installed_app"
+  echo "Transcription service: http://127.0.0.1:$TRANSCRIPTION_PORT"
+}
+
+status_agents() {
+  local domain="gui/$(id -u)"
+  launchctl print "$domain/$engine_label" 2>/dev/null \
+    | grep -E '^\s*(state|pid|last exit code) =' || true
+  launchctl print "$domain/$menu_label" 2>/dev/null \
+    | grep -E '^\s*(state|pid|last exit code) =' || true
+  local port=3212
+  if [[ -f "$env_file" ]]; then
+    load_env
+    port="$TRANSCRIPTION_PORT"
+  fi
+  curl --fail --silent --show-error "http://127.0.0.1:$port/healthz" || true
+  echo
+}
+
+uninstall_agents() {
+  local domain="gui/$(id -u)"
+  launchctl bootout "$domain/$engine_label" 2>/dev/null || true
+  launchctl bootout "$domain/$menu_label" 2>/dev/null || true
+  rm -f "$engine_plist" "$menu_plist"
+  rm -rf "$installed_app" "$runtime_dir"
+  echo "Removed the Sharpi Transcribe LaunchAgents, runtime, and menu-bar app"
+}
+
+case "${1:-}" in
+  run) run_service ;;
+  install) install_agents ;;
+  status) status_agents ;;
+  uninstall) uninstall_agents ;;
+  *) usage ;;
+esac

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+configuration=release
+if [[ "${1:-}" == "--debug" ]]; then
+  configuration=debug
+elif [[ -n "${1:-}" ]]; then
+  echo "Usage: scripts/build-app [--debug]" >&2
+  exit 2
+fi
+
+app="$root/dist/Sharpi Transcribe.app"
+contents="$app/Contents"
+executable="$contents/MacOS/SharpiTranscribe"
+rm -rf "$app"
+mkdir -p "$contents/MacOS"
+cp "$root/macos/SharpiTranscribe/Info.plist" "$contents/Info.plist"
+plutil -lint "$contents/Info.plist" >/dev/null
+
+arch="$(uname -m)"
+compile_flags=(-swift-version 5 -parse-as-library -target "${arch}-apple-macos14.0")
+if [[ "$configuration" == debug ]]; then
+  compile_flags+=(-D DEBUG -Onone -g)
+else
+  compile_flags+=(-O)
+fi
+
+sources=("$root"/macos/SharpiTranscribe/*.swift)
+xcrun swiftc \
+  "${compile_flags[@]}" \
+  -framework AppKit \
+  -framework ApplicationServices \
+  -framework AVFoundation \
+  -framework Carbon \
+  -framework CoreGraphics \
+  -framework SwiftUI \
+  "${sources[@]}" \
+  -o "$executable"
+
+identity="${TRANSCRIBE_SIGNING_IDENTITY:--}"
+codesign --force --sign "$identity" --timestamp=none "$app" >/dev/null
+printf '%s\n' "$app"
