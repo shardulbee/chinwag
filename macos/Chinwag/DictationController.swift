@@ -234,7 +234,7 @@ final class DictationController {
                        focusIsUnchanged,
                        self.paste(text)
                     {
-                        self.hud.show(.success, on: self.originatingScreen)
+                        self.hud.show(.hidden, on: self.originatingScreen)
                     } else {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(text, forType: .string)

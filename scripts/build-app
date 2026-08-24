@@ -23,8 +23,27 @@ plutil -lint "$contents/Info.plist" >/dev/null
 
 icon_tmp="$(mktemp -d)"
 trap 'rm -rf "$icon_tmp"' EXIT
-iconset="$icon_tmp/Chinwag.iconset"
-mkdir -p "$iconset"
+catalog="$icon_tmp/Assets.xcassets"
+app_icon="$catalog/AppIcon.appiconset"
+mkdir -p "$app_icon"
+printf '{"info":{"author":"xcode","version":1}}\n' > "$catalog/Contents.json"
+cat > "$app_icon/Contents.json" <<'JSON'
+{
+  "images": [
+    {"filename":"icon_16x16.png","idiom":"mac","scale":"1x","size":"16x16"},
+    {"filename":"icon_16x16@2x.png","idiom":"mac","scale":"2x","size":"16x16"},
+    {"filename":"icon_32x32.png","idiom":"mac","scale":"1x","size":"32x32"},
+    {"filename":"icon_32x32@2x.png","idiom":"mac","scale":"2x","size":"32x32"},
+    {"filename":"icon_128x128.png","idiom":"mac","scale":"1x","size":"128x128"},
+    {"filename":"icon_128x128@2x.png","idiom":"mac","scale":"2x","size":"128x128"},
+    {"filename":"icon_256x256.png","idiom":"mac","scale":"1x","size":"256x256"},
+    {"filename":"icon_256x256@2x.png","idiom":"mac","scale":"2x","size":"256x256"},
+    {"filename":"icon_512x512.png","idiom":"mac","scale":"1x","size":"512x512"},
+    {"filename":"icon_512x512@2x.png","idiom":"mac","scale":"2x","size":"512x512"}
+  ],
+  "info":{"author":"xcode","version":1}
+}
+JSON
 icon_source="$root/macos/Chinwag/Assets/ChinwagIcon.png"
 icon_specs=(
   "16 icon_16x16.png"
@@ -40,9 +59,17 @@ icon_specs=(
 )
 for spec in "${icon_specs[@]}"; do
   read -r size filename <<< "$spec"
-  sips -z "$size" "$size" "$icon_source" --out "$iconset/$filename" >/dev/null
+  sips -z "$size" "$size" "$icon_source" --out "$app_icon/$filename" >/dev/null
 done
-iconutil -c icns "$iconset" -o "$resources/Chinwag.icns"
+xcrun actool "$catalog" \
+  --compile "$resources" \
+  --platform macosx \
+  --minimum-deployment-target 14.0 \
+  --app-icon AppIcon \
+  --output-partial-info-plist "$icon_tmp/asset-info.plist" \
+  --warnings \
+  --errors \
+  --output-format human-readable-text >/dev/null
 cp "$root/macos/Chinwag/Assets/ChinwagMenuTemplate.png" "$resources/"
 cp "$root/macos/Chinwag/Assets/ChinwagMenuTemplate@2x.png" "$resources/"
 
@@ -67,5 +94,37 @@ xcrun swiftc \
   "${sources[@]}" \
   -o "$executable"
 
-codesign --force --sign - --timestamp=none "$app" >/dev/null
-printf '%s\n' "$app"
+signing_identity="Apple Development: Shardul Baral (HZ9UCNZVQV)"
+signer="$root/dist/ChinwagSigner.app"
+if [[ ! -x "$signer/Contents/MacOS/ChinwagSigner" ]]; then
+  rm -rf "$signer"
+  mkdir -p "$signer/Contents/MacOS"
+  cat > "$signer/Contents/MacOS/ChinwagSigner" <<EOF
+#!/bin/bash
+exec /usr/bin/codesign --force --sign '$signing_identity' --timestamp=none "\$1"
+EOF
+  chmod +x "$signer/Contents/MacOS/ChinwagSigner"
+  cat > "$signer/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleExecutable</key><string>ChinwagSigner</string>
+<key>CFBundleIdentifier</key><string>com.shardul.chinwag.signer</string>
+<key>CFBundleName</key><string>Chinwag Signer</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+  codesign --force --sign - --timestamp=none "$signer" >/dev/null
+fi
+open -n "$signer" --args "$app"
+for _ in {1..300}; do
+  if codesign --verify --deep --strict "$app" 2>/dev/null \
+    && codesign -dvv "$app" 2>&1 | grep -F "Authority=$signing_identity" >/dev/null; then
+    printf '%s\n' "$app"
+    exit 0
+  fi
+  sleep 0.1
+done
+printf 'Could not sign Chinwag with %s.\n' "$signing_identity" >&2
+exit 1
