@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="macos/Chinwag/Assets/ChinwagIcon.png" alt="Chinwag singing bird icon" width="180">
+</p>
+
 # Chinwag
 
 Chinwag is local push-to-talk dictation for macOS.
@@ -76,4 +80,4 @@ Audio stays on the Mac. Temporary recordings are removed. Audio and transcript t
 
 ## License
 
-Chinwag is available under the [MIT License](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md) for downloaded and vendored components.
+Chinwag is available under the [MIT License](LICENSE). The vendored `transcribe.cpp` header retains its included MIT license.
