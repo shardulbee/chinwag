@@ -1,7 +1,7 @@
 import Foundation
 
-struct ServiceHealth: Decodable {
-    struct LastTranscription: Decodable {
+struct ServiceHealth: Decodable, Equatable {
+    struct LastTranscription: Decodable, Equatable {
         let audioSeconds: Double
         let completedAt: String
         let elapsedMs: Int
@@ -103,12 +103,16 @@ final class AppState: ObservableObject {
     }
 
     func apply(_ health: ServiceHealth) {
-        backend = health.backend
-        device = health.device
-        engineError = health.error
-        engineState = health.state
-        lastTranscription = health.lastTranscription
-        modelDisplayName = health.modelDisplayName
+        if backend != health.backend { backend = health.backend }
+        if device != health.device { device = health.device }
+        if engineError != health.error { engineError = health.error }
+        if engineState != health.state { engineState = health.state }
+        if lastTranscription != health.lastTranscription {
+            lastTranscription = health.lastTranscription
+        }
+        if modelDisplayName != health.modelDisplayName {
+            modelDisplayName = health.modelDisplayName
+        }
     }
 
     func applyFixture() {

@@ -25,6 +25,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var popover: NSPopover!
     private var settingsWindow: NSWindow?
     private var stateObservation: AnyCancellable?
+    private var statusUpdateScheduled = false
     private var loadingTimer: Timer?
     private var loadingDimmed = false
 
@@ -41,9 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         configureStatusItem()
         configurePopover()
         stateObservation = state.objectWillChange.sink { [weak self] _ in
+            guard let self, !self.statusUpdateScheduled else { return }
+            self.statusUpdateScheduled = true
             DispatchQueue.main.async {
-                self?.updateStatusItem()
-                self?.fitPopover()
+                self.statusUpdateScheduled = false
+                self.updateStatusItem()
             }
         }
         service.startPolling()
