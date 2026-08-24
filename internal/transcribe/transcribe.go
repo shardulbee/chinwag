@@ -2,7 +2,7 @@ package transcribe
 
 /*
 #cgo darwin,arm64 CFLAGS: -I${SRCDIR}
-#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../node_modules/@transcribe-cpp/darwin-arm64-metal -ltranscribe
+#cgo darwin,arm64 LDFLAGS: -L${SRCDIR}/../../artifacts/transcribe-native-macos-arm64-metal -ltranscribe
 
 #include "transcribe.h"
 #include <stdatomic.h>

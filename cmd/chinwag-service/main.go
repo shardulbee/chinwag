@@ -25,7 +25,9 @@ import (
 
 const (
 	host                     = "127.0.0.1"
-	defaultPort              = 3212
+	port                     = 3212
+	modelBytes               = 1_558_162_944
+	modelSHA256              = "0ea56826d8bd5d74b7143a4a04e022dc1bb75452cfae49d98b6acb0c1d16a1fb"
 	maximumUploadBytes       = 25 * 1024 * 1024
 	requestOverheadBytes     = 1_000_000
 	transcriptionTimeout     = 120 * time.Second
@@ -122,24 +124,18 @@ func (failure *httpFailure) Error() string {
 }
 
 func main() {
-	port, err := servicePort(os.Getenv("TRANSCRIPTION_PORT"))
+	home, err := os.UserHomeDir()
 	if err != nil {
 		logLine("error", "transcription.configuration.failed", map[string]any{"error": err.Error()})
 		os.Exit(1)
 	}
-	converterPath := strings.TrimSpace(os.Getenv("AFCONVERT_PATH"))
-	if converterPath == "" {
-		converterPath = "/usr/bin/afconvert"
+	executable, err := os.Executable()
+	if err != nil {
+		logLine("error", "transcription.configuration.failed", map[string]any{"error": err.Error()})
+		os.Exit(1)
 	}
-	artifactDirectory := strings.TrimSpace(os.Getenv("TRANSCRIBE_LIBRARY_DIR"))
-	if artifactDirectory == "" {
-		executable, executableError := os.Executable()
-		if executableError != nil {
-			logLine("error", "transcription.configuration.failed", map[string]any{"error": executableError.Error()})
-			os.Exit(1)
-		}
-		artifactDirectory = filepath.Join(filepath.Dir(executable), "lib")
-	}
+	modelPath := filepath.Join(home, ".local", "share", "chinwag", "models", audio.ModelName+".gguf")
+	artifactDirectory := filepath.Join(filepath.Dir(executable), "lib")
 
 	applicationContext, stopApplication := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stopApplication()
@@ -149,7 +145,7 @@ func main() {
 			Device:  "Apple GPU",
 			State:   engineLoading,
 		},
-		converterPath:     converterPath,
+		converterPath:     "/usr/bin/afconvert",
 		artifactDirectory: artifactDirectory,
 		waitingSlots:      make(chan struct{}, maximumQueuedRequests),
 		computeSlot:       make(chan struct{}, 1),
@@ -173,7 +169,7 @@ func main() {
 		},
 	}
 	logLine("info", "transcription.listening", map[string]any{"host": host, "port": port})
-	go serverService.loadModel()
+	go serverService.loadModel(applicationContext, modelPath)
 
 	serveDone := make(chan error, 1)
 	go func() {
@@ -487,21 +483,30 @@ func oneTextField(fields map[string][]string, name string) (string, error) {
 	return values[0], nil
 }
 
-func (service *service) loadModel() {
+func (service *service) loadModel(ctx context.Context, modelPath string) {
 	defer close(service.loadDone)
-	modelPath := strings.TrimSpace(os.Getenv("TRANSCRIBE_MODEL"))
-	if modelPath == "" {
-		service.setLoadError("set TRANSCRIBE_MODEL before starting the transcription service")
-		return
-	}
-	metadata, err := os.Stat(modelPath)
-	if err != nil || !metadata.Mode().IsRegular() {
-		service.setLoadError("TRANSCRIBE_MODEL does not name a readable file")
-		return
+	markerPath := modelPath + ".sha256"
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		metadata, metadataError := os.Lstat(modelPath)
+		marker, markerError := os.ReadFile(markerPath)
+		if metadataError == nil &&
+			metadata.Mode().IsRegular() &&
+			metadata.Size() == modelBytes &&
+			markerError == nil &&
+			strings.TrimSpace(string(marker)) == modelSHA256 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
 	}
 	file, err := os.Open(modelPath)
 	if err != nil {
-		service.setLoadError("TRANSCRIBE_MODEL does not name a readable file")
+		service.setLoadError("the downloaded transcription model is unreadable")
 		return
 	}
 	_ = file.Close()
@@ -597,17 +602,6 @@ func writeFailure(response http.ResponseWriter, err error) {
 	writeJSON(response, status, map[string]any{
 		"error": map[string]any{"message": message, "type": errorType},
 	})
-}
-
-func servicePort(raw string) (int, error) {
-	if strings.TrimSpace(raw) == "" {
-		return defaultPort, nil
-	}
-	port, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || port < 1 || port > 65_535 {
-		return 0, errors.New("TRANSCRIPTION_PORT must be an integer from 1 to 65535")
-	}
-	return port, nil
 }
 
 func nilIfEmpty(value string) any {

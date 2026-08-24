@@ -19,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let permissions = PermissionManager()
     private let hotKey = GlobalHotKey()
     private var service: ServiceClient!
+    private var modelInstaller: ModelInstaller!
     private var dictation: DictationController!
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
@@ -30,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         service = ServiceClient(state: state)
+        modelInstaller = ModelInstaller(state: state)
         dictation = DictationController(
             state: state,
             permissions: permissions,
@@ -48,8 +50,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateStatusItem()
 
         #if DEBUG
+        if ProcessInfo.processInfo.environment["TRANSCRIBE_FIXTURE"] == nil {
+            modelInstaller.start()
+        }
         configureFixtureIfNeeded()
         #else
+        modelInstaller.start()
         presentInitialSetupIfNeeded()
         #endif
     }
@@ -91,10 +97,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case .transcribing:
             systemSymbol = "waveform"
         case .idle:
-            switch state.engineState {
-            case "transcribing": systemSymbol = "waveform"
-            case "error": systemSymbol = "exclamationmark.triangle"
-            default: systemSymbol = nil
+            if case .failed = state.modelInstall {
+                systemSymbol = "exclamationmark.triangle"
+            } else {
+                switch state.engineState {
+                case "transcribing": systemSymbol = "waveform"
+                case "error": systemSymbol = "exclamationmark.triangle"
+                default: systemSymbol = nil
+                }
             }
         }
 
@@ -112,7 +122,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         button.toolTip = "Chinwag — \(state.statusTitle)"
         button.setAccessibilityLabel("Chinwag: \(state.statusTitle)")
 
-        let shouldBreathe = state.engineState == "loading" && state.activity == .idle
+        let modelIsLoading: Bool
+        switch state.modelInstall {
+        case .checking, .downloading: modelIsLoading = true
+        case .failed, .ready: modelIsLoading = false
+        }
+        let shouldBreathe = (modelIsLoading || state.engineState == "loading")
+            && state.activity == .idle
         if shouldBreathe, loadingTimer == nil {
             loadingTimer = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) {
                 [weak self] _ in
@@ -150,8 +166,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if settingsWindow == nil {
             let controller = NSHostingController(
                 rootView: TranscriptionSettingsView(
+                    state: state,
                     permissions: permissions,
-                    hotKey: hotKey))
+                    hotKey: hotKey,
+                    retryModelDownload: { [weak self] in self?.modelInstaller.retry() }))
             let window = NSWindow(contentViewController: controller)
             window.title = "Chinwag"
             window.styleMask = [.closable, .miniaturizable, .titled]

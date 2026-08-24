@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+version=0.2.1
+archive_name="transcribe-native-$version-macos-arm64-metal.tar.gz"
+directory_name=transcribe-native-macos-arm64-metal
+native="$root/artifacts/$directory_name"
+url="https://github.com/handy-computer/transcribe.cpp/releases/download/v$version/$archive_name"
+sha256=290a9577f9f9ba1cdac17698f870ab171c4710f0844d965cbcb37a7aec1386f8
+required=(
+  contract.json
+  libggml-base.dylib
+  libggml-cpu.dylib
+  libggml-metal.dylib
+  libggml.dylib
+  libtranscribe.dylib
+  licenses/LICENSE
+  licenses/ggml/LICENSE
+  licenses/src/third_party/miniz/LICENSE
+)
+
+valid=1
+for file in "${required[@]}"; do [[ -s "$native/$file" ]] || valid=0; done
+if [[ "$valid" == 1 \
+  && "$(plutil -extract version raw "$native/contract.json" 2>/dev/null || true)" == "$version" \
+  && "$(plutil -extract lane raw "$native/contract.json" 2>/dev/null || true)" == "metal" ]]; then
+  exit 0
+fi
+
+[[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || {
+  echo "Chinwag requires Apple silicon macOS" >&2
+  exit 1
+}
+mkdir -p "$root/artifacts"
+temporary="$(mktemp -d "$root/artifacts/.transcribe-native.XXXXXX")"
+trap 'rm -rf "$temporary"' EXIT
+
+curl --fail --location --proto '=https' --tlsv1.2 --silent --show-error \
+  --output "$temporary/$archive_name" "$url"
+if ! echo "$sha256  $temporary/$archive_name" | shasum -a 256 --check --status; then
+  echo "The native release checksum did not match" >&2
+  exit 1
+fi
+tar -xzf "$temporary/$archive_name" -C "$temporary"
+extracted="$temporary/$directory_name"
+for file in "${required[@]}"; do
+  [[ -s "$extracted/$file" ]] || {
+    echo "The native release is missing $file" >&2
+    exit 1
+  }
+done
+[[ "$(plutil -extract version raw "$extracted/contract.json")" == "$version" \
+  && "$(plutil -extract lane raw "$extracted/contract.json")" == "metal" ]] || {
+  echo "The native release contract is not the pinned Metal build" >&2
+  exit 1
+}
+
+rm -rf "$native"
+mv "$extracted" "$native"
+printf '%s\n' "$native"

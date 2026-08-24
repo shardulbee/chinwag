@@ -178,8 +178,8 @@ final class DictationController {
             settingsAction?()
             return
         }
-        guard state.engineState == "ready" else {
-            let message = state.engineError ?? "Transcription service unavailable"
+        guard state.isReady else {
+            let message = state.unavailableMessage
             showNotice(message, error: true)
             hud.show(.error(message))
             return

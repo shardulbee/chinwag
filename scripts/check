@@ -11,15 +11,27 @@ if [[ -n "$unformatted" ]]; then
   exit 1
 fi
 
-native="$root/node_modules/@transcribe-cpp/darwin-arm64-metal"
-[[ -s "$native/libtranscribe.dylib" ]] || {
-  echo "Native transcription artifacts are missing; run npm ci" >&2
-  exit 1
-}
+"$root/scripts/fetch-native"
+native="$root/artifacts/transcribe-native-macos-arm64-metal"
 export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
 export DYLD_LIBRARY_PATH="$native${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 go vet ./...
 go test ./...
 
-bash -n scripts/build-app scripts/build-service scripts/check scripts/service
+arch="$(uname -m)"
+xcrun swiftc \
+  -swift-version 5 \
+  -parse-as-library \
+  -target "${arch}-apple-macos14.0" \
+  -typecheck \
+  -framework AppKit \
+  -framework ApplicationServices \
+  -framework AVFoundation \
+  -framework Carbon \
+  -framework CoreGraphics \
+  -framework CryptoKit \
+  -framework SwiftUI \
+  macos/Chinwag/*.swift
+
+bash -n scripts/build-app scripts/build-service scripts/check scripts/fetch-native scripts/service
 plutil -lint macos/Chinwag/Info.plist >/dev/null

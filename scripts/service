@@ -2,14 +2,13 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-env_file="${TRANSCRIBE_ENV_FILE:-$root/.env}"
 engine_label="com.shardul.chinwag.service"
 menu_label="com.shardul.chinwag.menu"
 engine_plist="$HOME/Library/LaunchAgents/$engine_label.plist"
 menu_plist="$HOME/Library/LaunchAgents/$menu_label.plist"
-state_dir="${TRANSCRIBE_STATE_DIR:-$HOME/.local/state/chinwag}"
-runtime_dir="${TRANSCRIBE_RUNTIME_DIR:-$HOME/.local/share/chinwag/runtime}"
-installed_app="${TRANSCRIBE_APP_PATH:-$HOME/Applications/Chinwag.app}"
+state_dir="$HOME/.local/state/chinwag"
+runtime_dir="$HOME/.local/share/chinwag/runtime"
+installed_app="$HOME/Applications/Chinwag.app"
 built_service="$root/dist/chinwag-service"
 built_library_dir="$root/dist/lib"
 
@@ -18,45 +17,12 @@ usage() {
   exit 2
 }
 
-load_env() {
-  [[ -f "$env_file" && ! -L "$env_file" ]] || {
-    echo "Environment must be a regular non-symlink file: $env_file" >&2
-    return 1
-  }
-  local owner mode links
-  read -r owner mode links < <(stat -f '%u %Lp %l' "$env_file")
-  [[ "$owner" == "$(id -u)" && "$mode" == 600 && "$links" == 1 ]] || {
-    echo "Environment must be owned by the current user, mode 0600, with one link: $env_file" >&2
-    return 1
-  }
-  set -a
-  # shellcheck disable=SC1090
-  source "$env_file"
-  set +a
-  [[ -n "${TRANSCRIBE_MODEL:-}" ]] || {
-    echo "Set TRANSCRIBE_MODEL in $env_file" >&2
-    return 1
-  }
-  AFCONVERT_PATH="${AFCONVERT_PATH:-/usr/bin/afconvert}"
-  TRANSCRIPTION_PORT="${TRANSCRIPTION_PORT:-3212}"
-}
-
 run_service() {
-  load_env
   [[ -x "$built_service" && -s "$built_library_dir/libtranscribe.dylib" ]] || {
     echo "Build the Go service first with scripts/build-service" >&2
     exit 1
   }
-  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-  exec env -i \
-    AFCONVERT_PATH="$AFCONVERT_PATH" \
-    HOME="$HOME" \
-    PATH="$PATH" \
-    TMPDIR="${TMPDIR:-/tmp}" \
-    TRANSCRIBE_LIBRARY_DIR="$built_library_dir" \
-    TRANSCRIBE_MODEL="$TRANSCRIBE_MODEL" \
-    TRANSCRIPTION_PORT="$TRANSCRIPTION_PORT" \
-    "$built_service"
+  exec "$built_service"
 }
 
 new_plist() {
@@ -86,21 +52,8 @@ install_agents() {
     echo "LaunchAgent installation requires macOS" >&2
     exit 1
   }
-  load_env
-  [[ "$TRANSCRIBE_MODEL" == /* && -f "$TRANSCRIBE_MODEL" && -r "$TRANSCRIBE_MODEL" ]] || {
-    echo "TRANSCRIBE_MODEL must be an absolute path to a readable file" >&2
-    exit 1
-  }
-  [[ -d "$root/node_modules/@transcribe-cpp/darwin-arm64-metal" ]] || {
-    echo "Run npm ci before installing Chinwag" >&2
-    exit 1
-  }
-
-  local signing_identity="${TRANSCRIBE_SIGNING_IDENTITY:--}"
-
-  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
   "$root/scripts/build-service" >/dev/null
-  TRANSCRIBE_SIGNING_IDENTITY="$signing_identity" "$root/scripts/build-app" >/dev/null
+  "$root/scripts/build-app" >/dev/null
 
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Applications" "$state_dir"
   chmod 700 "$state_dir"
@@ -124,14 +77,6 @@ install_agents() {
   plist_string "$engine_plist" StandardOutPath "$state_dir/service.log"
   plist_string "$engine_plist" StandardErrorPath "$state_dir/service.log"
   plutil -insert ThrottleInterval -integer 5 "$engine_plist"
-  plutil -insert EnvironmentVariables -dictionary "$engine_plist"
-  plist_string "$engine_plist" EnvironmentVariables.AFCONVERT_PATH "$AFCONVERT_PATH"
-  plist_string "$engine_plist" EnvironmentVariables.HOME "$HOME"
-  plist_string "$engine_plist" EnvironmentVariables.PATH "$PATH"
-  plist_string "$engine_plist" EnvironmentVariables.TMPDIR "${TMPDIR:-/tmp}"
-  plist_string "$engine_plist" EnvironmentVariables.TRANSCRIBE_LIBRARY_DIR "$runtime_dir/lib"
-  plist_string "$engine_plist" EnvironmentVariables.TRANSCRIBE_MODEL "$TRANSCRIBE_MODEL"
-  plist_string "$engine_plist" EnvironmentVariables.TRANSCRIPTION_PORT "$TRANSCRIPTION_PORT"
 
   new_plist "$menu_plist"
   plist_string "$menu_plist" Label "$menu_label"
@@ -141,9 +86,6 @@ install_agents() {
   plist_string "$menu_plist" LimitLoadToSessionType Aqua
   plist_string "$menu_plist" StandardOutPath "$state_dir/menu.log"
   plist_string "$menu_plist" StandardErrorPath "$state_dir/menu.log"
-  plutil -insert EnvironmentVariables -dictionary "$menu_plist"
-  plist_string "$menu_plist" EnvironmentVariables.TRANSCRIPTION_URL \
-    "http://127.0.0.1:$TRANSCRIPTION_PORT"
 
   local domain="gui/$(id -u)"
   launchctl bootout "$domain/$engine_label" 2>/dev/null || true
@@ -165,9 +107,9 @@ install_agents() {
     engine_pid="$(launchctl print "$domain/$engine_label" 2>/dev/null \
       | awk '/^[[:space:]]*pid =/{print $3; exit}')"
     health="$(curl --silent --max-time 1 \
-      "http://127.0.0.1:$TRANSCRIPTION_PORT/healthz" 2>/dev/null || true)"
+      "http://127.0.0.1:3212/healthz" 2>/dev/null || true)"
     if [[ -n "$engine_pid" && "$health" == *"\"pid\":$engine_pid"* \
-      && "$health" == *'"state":"ready"'* ]]; then
+      && ( "$health" == *'"state":"ready"'* || "$health" == *'"state":"loading"'* ) ]]; then
       ready=1
       break
     fi
@@ -180,7 +122,7 @@ install_agents() {
   fi
 
   echo "Installed $installed_app"
-  echo "Transcription service: http://127.0.0.1:$TRANSCRIPTION_PORT"
+  echo "Transcription service: http://127.0.0.1:3212"
 }
 
 status_agents() {
@@ -189,12 +131,7 @@ status_agents() {
     | grep -E '^\s*(state|pid|last exit code) =' || true
   launchctl print "$domain/$menu_label" 2>/dev/null \
     | grep -E '^\s*(state|pid|last exit code) =' || true
-  local port=3212
-  if [[ -f "$env_file" ]]; then
-    load_env
-    port="$TRANSCRIPTION_PORT"
-  fi
-  curl --fail --silent --show-error "http://127.0.0.1:$port/healthz" || true
+  curl --fail --silent --show-error "http://127.0.0.1:3212/healthz" || true
   echo
 }
 

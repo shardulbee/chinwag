@@ -23,6 +23,13 @@ enum DictationActivity: Equatable {
     case transcribing
 }
 
+enum ModelInstallState: Equatable {
+    case checking
+    case downloading(Double)
+    case failed(String)
+    case ready
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var activity: DictationActivity = .idle
@@ -33,6 +40,7 @@ final class AppState: ObservableObject {
     @Published var device = "Apple GPU"
     @Published var modelDisplayName = "Cohere Transcribe 03-2026 · Q4"
     @Published var lastTranscription: ServiceHealth.LastTranscription?
+    @Published var modelInstall: ModelInstallState = .checking
     @Published var notice: String?
     @Published var noticeIsError = false
 
@@ -43,11 +51,20 @@ final class AppState: ObservableObject {
         case .transcribing:
             return "Transcribing…"
         case .idle:
-            switch engineState {
-            case "ready": return "Ready"
-            case "transcribing": return "Transcribing…"
-            case "error": return engineError ?? "Unavailable"
-            default: return "Loading model…"
+            switch modelInstall {
+            case .checking:
+                return "Checking model…"
+            case let .downloading(progress):
+                return "Downloading model… \(Int(progress * 100))%"
+            case .failed:
+                return "Model download failed"
+            case .ready:
+                switch engineState {
+                case "ready": return "Ready"
+                case "transcribing": return "Transcribing…"
+                case "error": return engineError ?? "Unavailable"
+                default: return "Loading model…"
+                }
             }
         }
     }
@@ -57,6 +74,7 @@ final class AppState: ObservableObject {
         case .recording: return "mic.fill"
         case .transcribing: return "waveform"
         case .idle:
+            if case .failed = modelInstall { return "exclamationmark.triangle" }
             switch engineState {
             case "ready": return "mic"
             case "transcribing": return "waveform"
@@ -67,7 +85,21 @@ final class AppState: ObservableObject {
     }
 
     var isReady: Bool {
-        engineState == "ready" && activity == .idle
+        modelInstall == .ready && engineState == "ready" && activity == .idle
+    }
+
+    var modelDownloadError: String? {
+        guard case let .failed(message) = modelInstall else { return nil }
+        return message
+    }
+
+    var unavailableMessage: String {
+        switch modelInstall {
+        case .checking: return "Checking the transcription model"
+        case .downloading: return "The transcription model is still downloading"
+        case let .failed(message): return message
+        case .ready: return engineError ?? "Transcription service unavailable"
+        }
     }
 
     func apply(_ health: ServiceHealth) {
@@ -82,6 +114,7 @@ final class AppState: ObservableObject {
     func applyFixture() {
         engineState = "ready"
         engineError = nil
+        modelInstall = .ready
         backend = "Metal"
         device = "Apple M3 Max"
         modelDisplayName = "Cohere Transcribe 03-2026 · Q4"
@@ -100,9 +133,7 @@ final class ServiceClient {
 
     init(state: AppState) {
         self.state = state
-        let configured = ProcessInfo.processInfo.environment["TRANSCRIPTION_URL"]
-            ?? "http://127.0.0.1:3212"
-        self.baseURL = URL(string: configured)!
+        self.baseURL = URL(string: "http://127.0.0.1:3212")!
     }
 
     func startPolling() {

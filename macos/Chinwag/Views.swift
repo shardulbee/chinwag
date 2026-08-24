@@ -73,6 +73,27 @@ struct TranscriptionPopoverView: View {
                             .foregroundStyle(.secondary)
                     }
                     .frame(height: 42)
+                } else if case let .downloading(progress) = state.modelInstall {
+                    HStack(spacing: 9) {
+                        ProgressView(value: progress).frame(width: 100)
+                        Text("\(Int(progress * 100))%")
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .frame(height: 42)
+                } else if state.modelInstall == .checking {
+                    HStack(spacing: 9) {
+                        ProgressView().controlSize(.small)
+                        Text("Checking model…").foregroundStyle(.secondary)
+                    }
+                    .frame(height: 42)
+                } else if case .failed = state.modelInstall {
+                    HStack {
+                        Text("Open Settings to retry").foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .frame(height: 42)
                 } else {
                     HStack(spacing: 5) {
                         Text("Hold")
@@ -144,19 +165,20 @@ struct TranscriptionPopoverView: View {
         if state.activity == .transcribing || state.engineState == "transcribing" {
             return Image(systemName: "waveform")
         }
-        if state.engineState == "error" {
+        if state.engineState == "error" || state.modelDownloadError != nil {
             return Image(systemName: "exclamationmark.triangle")
         }
         return Image(nsImage: NSImage(named: NSImage.Name("ChinwagMenuIcon")) ?? NSImage())
     }
 
     private var usesBrandImage: Bool {
-        state.activity == .idle && state.engineState != "transcribing" && state.engineState != "error"
+        state.activity == .idle && state.engineState != "transcribing"
+            && state.engineState != "error" && state.modelDownloadError == nil
     }
 
     private var statusColor: Color {
         if state.activity == .recording { return .red }
-        if state.engineState == "error" { return .orange }
+        if state.engineState == "error" || state.modelDownloadError != nil { return .orange }
         return .primary
     }
 
@@ -172,8 +194,10 @@ struct TranscriptionPopoverView: View {
 }
 
 struct TranscriptionSettingsView: View {
+    @ObservedObject var state: AppState
     @ObservedObject var permissions: PermissionManager
     @ObservedObject var hotKey: GlobalHotKey
+    let retryModelDownload: () -> Void
 
     var body: some View {
         Form {
@@ -206,21 +230,40 @@ struct TranscriptionSettingsView: View {
             Section("Model") {
                 HStack(alignment: .center) {
                     SettingsLabel(
-                        title: "Transcription Model",
-                        caption: "Model selection is unavailable in this version.")
+                        title: "Cohere Transcribe 03-2026 · Q4",
+                        caption: "Downloaded once and stored on this Mac.")
                     Spacer(minLength: 18)
-                    Picker("Transcription Model", selection: .constant("cohere")) {
-                        Text("Cohere Transcribe 03-2026 · Q4").tag("cohere")
-                    }
-                    .labelsHidden()
-                    .frame(width: 270)
-                    .disabled(true)
+                    modelStatus
                 }
                 .padding(.vertical, 2)
             }
         }
         .formStyle(.grouped)
         .frame(width: 500, height: 420)
+    }
+
+    @ViewBuilder private var modelStatus: some View {
+        switch state.modelInstall {
+        case .checking:
+            ProgressView().controlSize(.small)
+        case let .downloading(progress):
+            HStack(spacing: 8) {
+                ProgressView(value: progress).frame(width: 90)
+                Text("\(Int(progress * 100))%").monospacedDigit()
+            }
+        case let .failed(message):
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.trailing)
+                Button("Retry Download", action: retryModelDownload)
+            }
+            .frame(width: 220, alignment: .trailing)
+        case .ready:
+            Label("Ready", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+        }
     }
 }
 

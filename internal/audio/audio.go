@@ -187,11 +187,11 @@ func Decode(ctx context.Context, contents []byte, mimeType, filename, converterP
 		return PCM16WAV{}, fmt.Errorf("%s has an unsupported audio format", filename)
 	}
 	if !filepath.IsAbs(converterPath) {
-		return PCM16WAV{}, errors.New("AFCONVERT_PATH must be an absolute path")
+		return PCM16WAV{}, errors.New("the audio converter path must be absolute")
 	}
 	converter, err := os.Stat(converterPath)
 	if err != nil || !converter.Mode().IsRegular() || converter.Mode().Perm()&0o111 == 0 {
-		return PCM16WAV{}, fmt.Errorf("the macOS afconvert audio converter is unavailable at %q; check AFCONVERT_PATH", converterPath)
+		return PCM16WAV{}, fmt.Errorf("the macOS afconvert audio converter is unavailable at %q", converterPath)
 	}
 
 	directory, err := os.MkdirTemp("", "chinwag-decode-")

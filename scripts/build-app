@@ -60,10 +60,10 @@ xcrun swiftc \
   -framework AVFoundation \
   -framework Carbon \
   -framework CoreGraphics \
+  -framework CryptoKit \
   -framework SwiftUI \
   "${sources[@]}" \
   -o "$executable"
 
-identity="${TRANSCRIBE_SIGNING_IDENTITY:--}"
-codesign --force --sign "$identity" --timestamp=none "$app" >/dev/null
+codesign --force --sign - --timestamp=none "$app" >/dev/null
 printf '%s\n' "$app"
