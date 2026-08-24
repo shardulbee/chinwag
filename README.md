@@ -1,22 +1,19 @@
 # Chinwag
 
-A private macOS menu-bar dictation app and resident local speech-to-text service. Chinwag is a
-standalone project: it does not run inside, import, deploy, or restart the Sharpi Host.
+Chinwag is local push-to-talk dictation for macOS. Hold **Option-Space**, speak, then release. Chinwag turns the recording into punctuated text and pastes it into the field where you started.
 
-The Go service keeps Cohere Transcribe 03-2026 Q4 resident on Apple Metal through the native
-`transcribe.cpp` C API and exposes one OpenAI-compatible endpoint on loopback. No Node process runs
-in production. The native companion reports actual model health, records
-while a global hotkey is held, and pastes into the field that was focused when recording began. If
-focus changes or Accessibility access is unavailable, it copies the transcript instead.
+Cohere Transcribe 03-2026 Q4 runs on Apple Metal. A resident Go service keeps the model loaded, so each dictation starts quickly. If focus changes before transcription finishes, Chinwag leaves the text on the clipboard instead of pasting into the wrong app.
 
-## Requirements
+## Install
 
-- Apple silicon Mac running macOS 14 or newer
-- mise and the Xcode command-line tools
-- npm, used only to fetch the pinned native `transcribe.cpp` libraries
-- `cohere-transcribe-03-2026-Q4_K_M.gguf`
+### 1. Check the requirements
 
-## Setup
+- An Apple silicon Mac with macOS 14 or newer.
+- [mise](https://mise.jdx.dev/) and the Xcode command-line tools.
+- npm for fetching the pinned native transcription libraries.
+- `cohere-transcribe-03-2026-Q4_K_M.gguf` from the [Cohere GGUF release](https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf).
+
+### 2. Prepare the Project
 
 ```sh
 mise install
@@ -25,92 +22,100 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Set the absolute model path in `.env`:
+Keep the model outside the Project. Set its absolute path in `.env`:
 
 ```sh
 TRANSCRIBE_MODEL="$HOME/.local/share/chinwag/models/cohere-transcribe-03-2026-Q4_K_M.gguf"
 # TRANSCRIPTION_PORT=3212
 # AFCONVERT_PATH=/usr/bin/afconvert
-# TRANSCRIBE_SIGNING_IDENTITY=Apple Development certificate hash or name
+# TRANSCRIBE_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)"
 ```
 
-The installer requires an owner-only, mode-0600, non-symlink `.env`. Builds are ad-hoc signed by
-default. Configure an Apple Development identity before granting permissions if you plan to
-rebuild frequently, so macOS can preserve Microphone and Accessibility grants.
-
-## Build and install
+### 3. Check and install Chinwag
 
 ```sh
 npm run check
-npm run build
 npm run install:mac
 ```
 
-Installation builds the Go service and signs `dist/Chinwag.app`, copies the app to
-`~/Applications`, installs the Go binary and native Metal libraries in a launch-safe production
-runtime under `~/.local/share/chinwag/runtime`, and starts two
-per-user LaunchAgents. The source repository stays in `~/Documents`; launchd cannot execute code
-directly from that macOS-protected folder.
+The installer adds `Chinwag.app` to `~/Applications`. It puts the resident service and native Metal libraries in `~/.local/share/chinwag/runtime` and starts both at login.
 
-- `com.shardul.chinwag.service` keeps the model resident even when the menu app quits.
-- `com.shardul.chinwag.menu` starts the visible accessory app at login.
+### 4. Grant access
 
-The first launch opens Settings but does not trigger permission prompts. Use the buttons there to
-request **Microphone** and **Accessibility** access. The default push-to-talk shortcut is
-**Option-Space**.
+The first launch opens Settings. Use the buttons there to grant **Microphone** and **Accessibility** access. Chinwag asks only after you choose each action.
+
+Builds use ad-hoc signing by default. If you rebuild often, set `TRANSCRIBE_SIGNING_IDENTITY` before granting access. A stable Apple Development signature helps macOS preserve these grants.
+
+### 5. Dictate
+
+1. Focus the field where you want the text.
+2. Hold **Option-Space**.
+3. Speak.
+4. Release **Option-Space**.
+
+Chinwag records through the menu app, transcribes through the resident service, and restores the clipboard after a successful paste.
+
+## How it works
+
+The menu app handles the shortcut, recording, permissions, and paste. The Go service keeps Cohere loaded and calls the pinned `transcribe.cpp` Metal libraries directly. Requests run one at a time through the model.
+
+npm is used only during setup and builds. The installed service runs as a Go executable with its native libraries. Quitting the menu app leaves the model resident.
+
+Check the installed services:
 
 ```sh
 npm run status
+```
+
+Remove the app, runtime, and LaunchAgents:
+
+```sh
 npm run uninstall:mac
 ```
 
-Logs are stored in `~/.local/state/chinwag/`.
+Logs are in `~/.local/state/chinwag/`.
 
 ## HTTP API
 
-The service binds only `127.0.0.1` and accepts:
+The service listens on `127.0.0.1:3212`:
 
 ```text
 GET  /healthz
 POST /v1/audio/transcriptions
 ```
 
-The transcription route accepts OpenAI-style multipart uploads with `file`, optional `language`,
-and `response_format` set to `json`, `text`, or `verbose_json`. AAC/M4A, CAF, FLAC, MP3/MP4,
-Ogg/Opus, WAV, and WebM are supported. Recordings are limited to ten minutes and requests are
-serialized through the resident model.
-
-Example:
+The transcription route uses OpenAI-style multipart uploads. It accepts `file`, optional `language`, and `response_format` values of `json`, `text`, or `verbose_json`.
 
 ```sh
 curl -F response_format=json -F file=@recording.m4a \
   http://127.0.0.1:3212/v1/audio/transcriptions
 ```
 
-All unrelated routes return 404. The service has no bearer token; the signed-in macOS user is the
-local trust boundary.
+Supported audio includes AAC/M4A, CAF, FLAC, MP3/MP4, Ogg/Opus, WAV, and WebM. An upload can be up to 25 MiB and ten minutes.
 
-## Tailnet access
+## Hermes over Tailscale
 
-To make only this API available through Tailscale, use Serve—not Funnel—and grant the intended
-client access to the selected HTTPS port:
+Keep Chinwag on loopback. Use Tailscale Serve for tailnet access:
 
 ```sh
 tailscale serve --bg --https=8443 http://127.0.0.1:3212
 ```
 
-Hermes can use the resulting URL ending in `/v1` as its OpenAI STT base URL. If its client insists
-on an API key, use the literal non-secret value `not-needed`; this service ignores Authorization.
+Grant access only to the intended tailnet client. Use Serve rather than Funnel.
 
-## Development
+Set Hermes's OpenAI STT base URL to the Serve URL ending in `/v1`. If Hermes requires an API key, use the non-secret value `not-needed`.
+
+## Privacy and safety
+
+- Audio is processed on the Mac with the preinstalled model.
+- Temporary recordings are removed after each dictation.
+- Audio and transcript text stay out of service logs.
+- The local API trusts the signed-in macOS user and has no bearer token.
+
+## Develop
 
 ```sh
+npm run build
 npm run serve
-scripts/build-service
 scripts/build-app --debug
 ```
-
-`npm run serve` builds and starts the Go service in the foreground; npm is not part of the running
-service. DEBUG app builds support deterministic UI capture with `TRANSCRIBE_FIXTURE`, `TRANSCRIBE_SHOW`, and
-`TRANSCRIBE_CAPTURE_DIR`. Audio bytes and transcript text are never written to service logs, and
-temporary recordings are removed after each dictation.
