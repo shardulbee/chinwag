@@ -10,6 +10,8 @@
     <string>Chinwag</string>
     <key>CFBundleIdentifier</key>
     <string>com.shardul.chinwag</string>
+    <key>CFBundleIconFile</key>
+    <string>Chinwag</string>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundleName</key>

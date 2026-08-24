@@ -84,10 +84,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateStatusItem() {
         guard let button = statusItem?.button else { return }
-        let image = NSImage(
-            systemSymbolName: state.statusSymbol,
-            accessibilityDescription: "Chinwag: \(state.statusTitle)")
-        image?.isTemplate = state.activity != .recording
+        let systemSymbol: String?
+        switch state.activity {
+        case .recording:
+            systemSymbol = nil
+        case .transcribing:
+            systemSymbol = "waveform"
+        case .idle:
+            switch state.engineState {
+            case "transcribing": systemSymbol = "waveform"
+            case "error": systemSymbol = "exclamationmark.triangle"
+            default: systemSymbol = nil
+            }
+        }
+
+        let image: NSImage?
+        if let systemSymbol {
+            image = NSImage(
+                systemSymbolName: systemSymbol,
+                accessibilityDescription: "Chinwag: \(state.statusTitle)")
+        } else {
+            image = NSImage(named: NSImage.Name("ChinwagMenuTemplate"))
+        }
+        image?.isTemplate = true
         button.image = image
         button.contentTintColor = state.activity == .recording ? .systemRed : nil
         button.toolTip = "Chinwag — \(state.statusTitle)"
