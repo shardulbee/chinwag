@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+[[ "$(uname -s)" == "Darwin" && "$(uname -m)" == "arm64" ]] || {
+  echo "The Chinwag service build currently requires Apple silicon macOS" >&2
+  exit 1
+}
+
+native="$root/node_modules/@transcribe-cpp/darwin-arm64-metal"
+required=(
+  contract.json
+  libggml-base.dylib
+  libggml-cpu.dylib
+  libggml-metal.dylib
+  libggml.dylib
+  libtranscribe.dylib
+)
+for file in "${required[@]}"; do
+  [[ -s "$native/$file" ]] || {
+    echo "Missing native transcription artifact: $native/$file; run npm ci" >&2
+    exit 1
+  }
+done
+
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+mkdir -p "$root/dist"
+rm -f "$root/dist/chinwag-service"
+CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o "$root/dist/chinwag-service" ./cmd/chinwag-service
+install_name_tool -add_rpath @executable_path/lib "$root/dist/chinwag-service"
+codesign --force --sign - --timestamp=none "$root/dist/chinwag-service" >/dev/null
+
+rm -rf "$root/dist/lib"
+mkdir -p "$root/dist/lib"
+for file in "${required[@]}"; do cp "$native/$file" "$root/dist/lib/"; done
+cp -R "$native/licenses" "$root/dist/lib/"
+printf '%s\n' "$root/dist/chinwag-service"

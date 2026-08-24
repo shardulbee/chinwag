@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+unformatted="$(gofmt -l cmd internal)"
+if [[ -n "$unformatted" ]]; then
+  echo "Go files need formatting:" >&2
+  printf '%s\n' "$unformatted" >&2
+  exit 1
+fi
+
+native="$root/node_modules/@transcribe-cpp/darwin-arm64-metal"
+[[ -s "$native/libtranscribe.dylib" ]] || {
+  echo "Native transcription artifacts are missing; run npm ci" >&2
+  exit 1
+}
+export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+export DYLD_LIBRARY_PATH="$native${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
+go vet ./...
+go test ./...
+
+bash -n scripts/build-app scripts/build-service scripts/check scripts/service
+plutil -lint macos/Chinwag/Info.plist >/dev/null

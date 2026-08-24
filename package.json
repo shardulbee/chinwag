@@ -2,29 +2,16 @@
   "name": "chinwag",
   "version": "0.1.0",
   "private": true,
-  "type": "module",
   "scripts": {
-    "build": "scripts/build-app",
-    "check": "npm run typecheck && npm run lint && npm run format:check",
-    "format": "oxfmt --write \"src/**/*.ts\" package.json tsconfig.json",
-    "format:check": "oxfmt --check \"src/**/*.ts\" package.json tsconfig.json",
+    "build": "scripts/build-service && scripts/build-app",
+    "check": "scripts/check",
+    "format": "gofmt -w cmd internal",
     "install:mac": "scripts/service install",
-    "lint": "oxlint src --deny-warnings",
-    "serve": "node --experimental-strip-types src/server.ts",
+    "serve": "scripts/build-service && scripts/service run",
     "status": "scripts/service status",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
     "uninstall:mac": "scripts/service uninstall"
   },
   "dependencies": {
-    "transcribe-cpp": "0.2.1"
-  },
-  "devDependencies": {
-    "@types/node": "24.13.3",
-    "oxfmt": "0.63.0",
-    "oxlint": "1.78.0",
-    "typescript": "5.9.3"
-  },
-  "engines": {
-    "node": ">=22.19.0"
+    "@transcribe-cpp/darwin-arm64-metal": "0.2.1"
   }
 }

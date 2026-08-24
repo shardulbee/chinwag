@@ -3,20 +3,23 @@
 A private macOS menu-bar dictation app and resident local speech-to-text service. Chinwag is a
 standalone project: it does not run inside, import, deploy, or restart the Sharpi Host.
 
-The engine keeps Cohere Transcribe 03-2026 Q4 resident on Apple Metal and exposes one
-OpenAI-compatible endpoint on loopback. The native companion reports actual model health, records
+The Go service keeps Cohere Transcribe 03-2026 Q4 resident on Apple Metal through the native
+`transcribe.cpp` C API and exposes one OpenAI-compatible endpoint on loopback. No Node process runs
+in production. The native companion reports actual model health, records
 while a global hotkey is held, and pastes into the field that was focused when recording began. If
 focus changes or Accessibility access is unavailable, it copies the transcript instead.
 
 ## Requirements
 
 - Apple silicon Mac running macOS 14 or newer
-- Node.js 22.19 or newer
+- mise and the Xcode command-line tools
+- npm, used only to fetch the pinned native `transcribe.cpp` libraries
 - `cohere-transcribe-03-2026-Q4_K_M.gguf`
 
 ## Setup
 
 ```sh
+mise install
 npm ci
 cp .env.example .env
 chmod 600 .env
@@ -43,8 +46,9 @@ npm run build
 npm run install:mac
 ```
 
-Installation builds and signs `dist/Chinwag.app`, copies it to `~/Applications`, installs a
-launch-safe production runtime under `~/.local/share/chinwag/runtime`, and starts two
+Installation builds the Go service and signs `dist/Chinwag.app`, copies the app to
+`~/Applications`, installs the Go binary and native Metal libraries in a launch-safe production
+runtime under `~/.local/share/chinwag/runtime`, and starts two
 per-user LaunchAgents. The source repository stays in `~/Documents`; launchd cannot execute code
 directly from that macOS-protected folder.
 
@@ -102,9 +106,11 @@ on an API key, use the literal non-secret value `not-needed`; this service ignor
 
 ```sh
 npm run serve
+scripts/build-service
 scripts/build-app --debug
 ```
 
-DEBUG builds support deterministic UI capture with `TRANSCRIBE_FIXTURE`, `TRANSCRIBE_SHOW`, and
+`npm run serve` builds and starts the Go service in the foreground; npm is not part of the running
+service. DEBUG app builds support deterministic UI capture with `TRANSCRIBE_FIXTURE`, `TRANSCRIBE_SHOW`, and
 `TRANSCRIBE_CAPTURE_DIR`. Audio bytes and transcript text are never written to service logs, and
 temporary recordings are removed after each dictation.

@@ -10,6 +10,8 @@ menu_plist="$HOME/Library/LaunchAgents/$menu_label.plist"
 state_dir="${TRANSCRIBE_STATE_DIR:-$HOME/.local/state/chinwag}"
 runtime_dir="${TRANSCRIBE_RUNTIME_DIR:-$HOME/.local/share/chinwag/runtime}"
 installed_app="${TRANSCRIBE_APP_PATH:-$HOME/Applications/Chinwag.app}"
+built_service="$root/dist/chinwag-service"
+built_library_dir="$root/dist/lib"
 
 usage() {
   echo "Usage: scripts/service {run|install|status|uninstall}" >&2
@@ -41,23 +43,20 @@ load_env() {
 
 run_service() {
   load_env
-  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-  local node_bin="${TRANSCRIBE_NODE:-$(command -v node || true)}"
-  if [[ ! -x "$node_bin" ]] && command -v mise >/dev/null 2>&1; then
-    node_bin="$(mise which node 2>/dev/null || true)"
-  fi
-  [[ -x "$node_bin" ]] || {
-    echo "Node is unavailable; set TRANSCRIBE_NODE in $env_file" >&2
+  [[ -x "$built_service" && -s "$built_library_dir/libtranscribe.dylib" ]] || {
+    echo "Build the Go service first with scripts/build-service" >&2
     exit 1
   }
+  export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
   exec env -i \
     AFCONVERT_PATH="$AFCONVERT_PATH" \
     HOME="$HOME" \
     PATH="$PATH" \
     TMPDIR="${TMPDIR:-/tmp}" \
+    TRANSCRIBE_LIBRARY_DIR="$built_library_dir" \
     TRANSCRIBE_MODEL="$TRANSCRIBE_MODEL" \
     TRANSCRIPTION_PORT="$TRANSCRIPTION_PORT" \
-    "$node_bin" --experimental-strip-types "$root/src/server.ts"
+    "$built_service"
 }
 
 new_plist() {
@@ -92,7 +91,7 @@ install_agents() {
     echo "TRANSCRIBE_MODEL must be an absolute path to a readable file" >&2
     exit 1
   }
-  [[ -d "$root/node_modules/transcribe-cpp" ]] || {
+  [[ -d "$root/node_modules/@transcribe-cpp/darwin-arm64-metal" ]] || {
     echo "Run npm ci before installing Chinwag" >&2
     exit 1
   }
@@ -100,33 +99,24 @@ install_agents() {
   local signing_identity="${TRANSCRIBE_SIGNING_IDENTITY:--}"
 
   export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-  local node_bin="${TRANSCRIBE_NODE:-$(command -v node || true)}"
-  if [[ ! -x "$node_bin" ]] && command -v mise >/dev/null 2>&1; then
-    node_bin="$(mise which node 2>/dev/null || true)"
-  fi
-  [[ -x "$node_bin" ]] || {
-    echo "Node is unavailable; set TRANSCRIBE_NODE in $env_file" >&2
-    exit 1
-  }
-  node_bin="$(realpath "$node_bin")"
+  "$root/scripts/build-service" >/dev/null
+  TRANSCRIBE_SIGNING_IDENTITY="$signing_identity" "$root/scripts/build-app" >/dev/null
 
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Applications" "$state_dir"
   chmod 700 "$state_dir"
   rm -rf "$runtime_dir"
-  mkdir -p "$runtime_dir/src"
-  chmod 700 "$runtime_dir" "$runtime_dir/src"
-  cp "$root/package.json" "$root/package-lock.json" "$runtime_dir/"
-  cp "$root/src/audio.ts" "$root/src/server.ts" "$runtime_dir/src/"
-  (cd "$runtime_dir" && npm ci --omit=dev --ignore-scripts --no-audit --no-fund)
+  mkdir -p "$runtime_dir/lib"
+  chmod 700 "$runtime_dir" "$runtime_dir/lib"
+  cp "$built_service" "$runtime_dir/chinwag-service"
+  ditto "$built_library_dir" "$runtime_dir/lib"
+  chmod 700 "$runtime_dir/chinwag-service"
 
-  TRANSCRIBE_SIGNING_IDENTITY="$signing_identity" "$root/scripts/build-app"
   rm -rf "$installed_app"
   ditto "$root/dist/Chinwag.app" "$installed_app"
 
   new_plist "$engine_plist"
   plist_string "$engine_plist" Label "$engine_label"
-  plist_array "$engine_plist" ProgramArguments \
-    "$node_bin" --experimental-strip-types "$runtime_dir/src/server.ts"
+  plist_array "$engine_plist" ProgramArguments "$runtime_dir/chinwag-service"
   plist_string "$engine_plist" WorkingDirectory "$runtime_dir"
   plist_bool "$engine_plist" RunAtLoad true
   plist_bool "$engine_plist" KeepAlive true
@@ -139,6 +129,7 @@ install_agents() {
   plist_string "$engine_plist" EnvironmentVariables.HOME "$HOME"
   plist_string "$engine_plist" EnvironmentVariables.PATH "$PATH"
   plist_string "$engine_plist" EnvironmentVariables.TMPDIR "${TMPDIR:-/tmp}"
+  plist_string "$engine_plist" EnvironmentVariables.TRANSCRIBE_LIBRARY_DIR "$runtime_dir/lib"
   plist_string "$engine_plist" EnvironmentVariables.TRANSCRIBE_MODEL "$TRANSCRIBE_MODEL"
   plist_string "$engine_plist" EnvironmentVariables.TRANSCRIPTION_PORT "$TRANSCRIPTION_PORT"
 
