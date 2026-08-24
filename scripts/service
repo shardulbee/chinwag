@@ -66,6 +66,10 @@ install_agents() {
 
   rm -rf "$installed_app"
   ditto "$root/dist/Chinwag.app" "$installed_app"
+  rm -rf "$root/dist/Chinwag.app"
+  local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+  "$lsregister" -f "$installed_app" >/dev/null 2>&1 || true
+  mdimport -i "$installed_app" >/dev/null 2>&1 || true
 
   new_plist "$engine_plist"
   plist_string "$engine_plist" Label "$engine_label"
