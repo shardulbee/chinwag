@@ -104,9 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 systemSymbolName: systemSymbol,
                 accessibilityDescription: "Chinwag: \(state.statusTitle)")
         } else {
-            image = NSImage(named: NSImage.Name("ChinwagMenuIcon"))
+            image = NSImage(named: NSImage.Name("ChinwagMenuTemplate"))
         }
-        image?.isTemplate = systemSymbol != nil
+        image?.isTemplate = true
         button.image = image
         button.contentTintColor = state.activity == .recording ? .systemRed : nil
         button.toolTip = "Chinwag — \(state.statusTitle)"

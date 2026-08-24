@@ -41,8 +41,8 @@ for spec in "${icon_specs[@]}"; do
   sips -z "$size" "$size" "$icon_source" --out "$iconset/$filename" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$resources/Chinwag.icns"
-cp "$root/macos/Chinwag/Assets/ChinwagMenuIcon.png" "$resources/"
-cp "$root/macos/Chinwag/Assets/ChinwagMenuIcon@2x.png" "$resources/"
+cp "$root/macos/Chinwag/Assets/ChinwagMenuTemplate.png" "$resources/"
+cp "$root/macos/Chinwag/Assets/ChinwagMenuTemplate@2x.png" "$resources/"
 
 arch="$(uname -m)"
 compile_flags=(-swift-version 5 -parse-as-library -target "${arch}-apple-macos14.0")
