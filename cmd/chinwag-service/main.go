@@ -199,6 +199,15 @@ func main() {
 }
 
 func (service *service) ServeHTTP(response http.ResponseWriter, request *http.Request) {
+	if request.Header.Get("Origin") != "" || request.Header.Get("Sec-Fetch-Site") != "" {
+		writeJSON(response, http.StatusForbidden, map[string]any{
+			"error": map[string]any{
+				"message": "browser requests are not allowed",
+				"type":    "invalid_request_error",
+			},
+		})
+		return
+	}
 	if request.Method == http.MethodGet && request.URL.Path == "/healthz" {
 		writeJSON(response, http.StatusOK, service.health())
 		return

@@ -14,11 +14,22 @@ scripts/check
 scripts/service install
 ```
 
-The first check downloads a pinned `transcribe.cpp` release. It uses no npm, Cargo, or CMake.
-
-On first launch, Chinwag downloads the 1.56 GB model from the Apache-2.0 [Cohere GGUF release](https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf). It stores the model in `~/.local/share/chinwag/models`. Progress appears in Settings.
+The first check downloads and verifies a pinned `transcribe.cpp` release. The first launch downloads and verifies the 1.56 GB Apache-2.0 [Cohere GGUF model](https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf).
 
 Grant **Microphone** and **Accessibility** access in Settings.
+
+### Signing
+
+`scripts/build-app` compiles the Swift app, builds its icon catalog, and signs the resulting app bundle. A fresh checkout uses an ad-hoc signature by default. If an installed Chinwag app already has a usable signing identity, later builds reuse it automatically.
+
+To preserve macOS permission grants from the first install, list your identities and provide your own Apple Development certificate:
+
+```sh
+security find-identity -v -p codesigning
+scripts/service install --sign "Apple Development: Your Name (TEAMID)"
+```
+
+Without a development certificate, use the default or pass `--adhoc`. Ad-hoc rebuilds can require granting permissions again.
 
 ## Use
 
@@ -37,25 +48,32 @@ scripts/service status
 scripts/service uninstall
 ```
 
-The app is in `~/Applications`. Runtime files are in `~/.local/share/chinwag/runtime`. Logs are in `~/.local/state/chinwag`.
+The app is installed in `~/Applications`. Runtime files are in `~/.local/share/chinwag/runtime`, the model is in `~/.local/share/chinwag/models`, and logs are in `~/.local/state/chinwag`.
 
-## Hermes
+## Transcription API
 
-Chinwag serves OpenAI-compatible transcription on loopback:
+Chinwag exposes an OpenAI-compatible transcription endpoint for native apps and command-line clients:
 
 ```text
-GET  http://127.0.0.1:3212/healthz
-POST http://127.0.0.1:3212/v1/audio/transcriptions
+Base URL  http://127.0.0.1:3212/v1
+POST      /audio/transcriptions
+Health    http://127.0.0.1:3212/healthz
 ```
 
-For remote Hermes access, use Tailscale Serve:
+Use `whisper-1` as the client model. Chinwag does not require an API key; clients that require a value can use a non-secret placeholder such as `not-needed`.
+
+The service listens only on loopback and rejects browser-originated transcription requests. For remote tailnet access, proxy it with Tailscale Serve and grant access only to the intended client:
 
 ```sh
 tailscale serve --bg --https=8443 http://127.0.0.1:3212
 ```
 
-Set Hermes's STT base URL to the Serve URL ending in `/v1`. Use `not-needed` as the API key. Grant access only to the intended tailnet client. Do not use Funnel.
+Chinwag has no HTTP authentication. Keep the listener private, use narrow network access controls, and never use Tailscale Funnel.
 
 ## Limits
 
 Audio stays on the Mac. Temporary recordings are removed. Audio and transcript text are not logged. Recordings can be up to 25 MiB and ten minutes.
+
+## License
+
+Chinwag is available under the [MIT License](LICENSE). See [third-party notices](THIRD_PARTY_NOTICES.md) for downloaded and vendored components.

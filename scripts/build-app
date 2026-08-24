@@ -3,12 +3,36 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 configuration=release
-if [[ "${1:-}" == "--debug" ]]; then
-  configuration=debug
-elif [[ -n "${1:-}" ]]; then
-  echo "Usage: scripts/build-app [--debug]" >&2
+signing_identity=""
+force_adhoc=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --debug)
+      configuration=debug
+      shift
+      ;;
+    --sign)
+      [[ -n "${2:-}" ]] || {
+        echo "--sign requires a code-signing identity" >&2
+        exit 2
+      }
+      signing_identity="$2"
+      shift 2
+      ;;
+    --adhoc)
+      force_adhoc=1
+      shift
+      ;;
+    *)
+      echo "Usage: scripts/build-app [--debug] [--adhoc | --sign IDENTITY]" >&2
+      exit 2
+      ;;
+  esac
+done
+[[ "$force_adhoc" != 1 || -z "$signing_identity" ]] || {
+  echo "--adhoc and --sign cannot be used together" >&2
   exit 2
-fi
+}
 
 app="$root/dist/Chinwag.app"
 mkdir -p "$root/dist"
@@ -94,31 +118,65 @@ xcrun swiftc \
   "${sources[@]}" \
   -o "$executable"
 
-signing_identity="Apple Development: Shardul Baral (HZ9UCNZVQV)"
-signer="$root/dist/ChinwagSigner.app"
-if [[ ! -x "$signer/Contents/MacOS/ChinwagSigner" ]]; then
-  rm -rf "$signer"
-  mkdir -p "$signer/Contents/MacOS"
-  cat > "$signer/Contents/MacOS/ChinwagSigner" <<EOF
-#!/bin/bash
-exec /usr/bin/codesign --force --sign '$signing_identity' --timestamp=none "\$1"
-EOF
-  chmod +x "$signer/Contents/MacOS/ChinwagSigner"
-  cat > "$signer/Contents/Info.plist" <<'PLIST'
+if [[ "$force_adhoc" == 1 ]]; then
+  signing_identity="-"
+elif [[ -z "$signing_identity" ]]; then
+  installed_app="$HOME/Applications/Chinwag.app"
+  installed_identity="$(codesign -dvv "$installed_app" 2>&1 \
+    | awk -F= '/^Authority=/{print substr($0, index($0, "=") + 1); exit}' || true)"
+  identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  if [[ -n "$installed_identity" && "$identities" == *"\"$installed_identity\""* ]]; then
+    signing_identity="$installed_identity"
+  else
+    signing_identity="-"
+  fi
+fi
+
+if [[ "$signing_identity" == "-" ]]; then
+  codesign --force --sign - --timestamp=none "$app" >/dev/null
+  printf '%s\n' "$app"
+  exit 0
+fi
+
+identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+[[ "$identities" == *"\"$signing_identity\""* ]] || {
+  printf 'Code-signing identity not found: %s\n' "$signing_identity" >&2
+  exit 1
+}
+sign_error="$icon_tmp/codesign.error"
+if codesign --force --sign "$signing_identity" --timestamp=none "$app" 2>"$sign_error"; then
+  printf '%s\n' "$app"
+  exit 0
+fi
+
+# Background build sessions cannot display Keychain prompts. Retry the same
+# narrowly scoped signing command in the logged-in GUI session.
+signer="$icon_tmp/ChinwagSigner.app"
+mkdir -p "$signer/Contents/MacOS"
+{
+  echo '#!/bin/bash'
+  printf 'exec /usr/bin/codesign --force --sign %q --timestamp=none %q\n' \
+    "$signing_identity" "$app"
+} > "$signer/Contents/MacOS/ChinwagSigner"
+chmod +x "$signer/Contents/MacOS/ChinwagSigner"
+cat > "$signer/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleExecutable</key><string>ChinwagSigner</string>
-<key>CFBundleIdentifier</key><string>com.shardul.chinwag.signer</string>
-<key>CFBundleName</key><string>Chinwag Signer</string>
+<key>CFBundleIdentifier</key><string>com.chinwag.signing-helper</string>
+<key>CFBundleName</key><string>Chinwag Signing Helper</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>LSUIElement</key><true/>
 </dict></plist>
 PLIST
-  codesign --force --sign - --timestamp=none "$signer" >/dev/null
+codesign --force --sign - --timestamp=none "$signer" >/dev/null
+if ! open -n "$signer"; then
+  cat "$sign_error" >&2
+  printf 'Could not open the Chinwag signing helper.\n' >&2
+  exit 1
 fi
-open -n "$signer" --args "$app"
-for _ in {1..300}; do
+for _ in {1..1200}; do
   if codesign --verify --deep --strict "$app" 2>/dev/null \
     && codesign -dvv "$app" 2>&1 | grep -F "Authority=$signing_identity" >/dev/null; then
     printf '%s\n' "$app"
@@ -126,5 +184,6 @@ for _ in {1..300}; do
   fi
   sleep 0.1
 done
+cat "$sign_error" >&2
 printf 'Could not sign Chinwag with %s.\n' "$signing_identity" >&2
 exit 1

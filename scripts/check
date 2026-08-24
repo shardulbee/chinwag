@@ -14,6 +14,7 @@ fi
 "$root/scripts/fetch-native"
 native="$root/artifacts/transcribe-native-macos-arm64-metal"
 export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+export CGO_LDFLAGS="-Wl,-rpath,$native${CGO_LDFLAGS:+ $CGO_LDFLAGS}"
 export DYLD_LIBRARY_PATH="$native${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 go vet ./...
 go test ./...

@@ -13,7 +13,7 @@ built_service="$root/dist/chinwag-service"
 built_library_dir="$root/dist/lib"
 
 usage() {
-  echo "Usage: scripts/service {run|install|status|uninstall}" >&2
+  echo "Usage: scripts/service {run|install [--adhoc | --sign IDENTITY]|status|uninstall}" >&2
   exit 2
 }
 
@@ -53,7 +53,11 @@ install_agents() {
     exit 1
   }
   "$root/scripts/build-service" >/dev/null
-  "$root/scripts/build-app" >/dev/null
+  if [[ $# -gt 0 ]]; then
+    "$root/scripts/build-app" "$@" >/dev/null
+  else
+    "$root/scripts/build-app" >/dev/null
+  fi
 
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Applications" "$state_dir"
   chmod 700 "$state_dir"
@@ -148,10 +152,12 @@ uninstall_agents() {
   echo "Removed the Chinwag LaunchAgents, runtime, and menu-bar app"
 }
 
-case "${1:-}" in
-  run) run_service ;;
-  install) install_agents ;;
-  status) status_agents ;;
-  uninstall) uninstall_agents ;;
+command="${1:-}"
+shift || true
+case "$command" in
+  run) [[ $# == 0 ]] || usage; run_service ;;
+  install) install_agents "$@" ;;
+  status) [[ $# == 0 ]] || usage; status_agents ;;
+  uninstall) [[ $# == 0 ]] || usage; uninstall_agents ;;
   *) usage ;;
 esac
