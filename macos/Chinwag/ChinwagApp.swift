@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let systemSymbol: String?
         switch state.activity {
         case .recording:
-            systemSymbol = nil
+            systemSymbol = "record.circle.fill"
         case .transcribing:
             systemSymbol = "waveform"
         case .idle:
@@ -104,9 +104,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 systemSymbolName: systemSymbol,
                 accessibilityDescription: "Chinwag: \(state.statusTitle)")
         } else {
-            image = NSImage(named: NSImage.Name("ChinwagMenuTemplate"))
+            image = NSImage(named: NSImage.Name("ChinwagMenuIcon"))
         }
-        image?.isTemplate = true
+        image?.isTemplate = systemSymbol != nil
         button.image = image
         button.contentTintColor = state.activity == .recording ? .systemRed : nil
         button.toolTip = "Chinwag — \(state.statusTitle)"

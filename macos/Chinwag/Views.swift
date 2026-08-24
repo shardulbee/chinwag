@@ -36,7 +36,7 @@ struct TranscriptionPopoverView: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 statusImage
-                    .renderingMode(.template)
+                    .renderingMode(usesBrandImage ? .original : .template)
                     .foregroundStyle(statusColor)
                     .frame(width: 18, height: 18)
                 VStack(alignment: .leading, spacing: 4) {
@@ -138,13 +138,20 @@ struct TranscriptionPopoverView: View {
     }
 
     private var statusImage: Image {
+        if state.activity == .recording {
+            return Image(systemName: "record.circle.fill")
+        }
         if state.activity == .transcribing || state.engineState == "transcribing" {
             return Image(systemName: "waveform")
         }
         if state.engineState == "error" {
             return Image(systemName: "exclamationmark.triangle")
         }
-        return Image(nsImage: NSImage(named: NSImage.Name("ChinwagMenuTemplate")) ?? NSImage())
+        return Image(nsImage: NSImage(named: NSImage.Name("ChinwagMenuIcon")) ?? NSImage())
+    }
+
+    private var usesBrandImage: Bool {
+        state.activity == .idle && state.engineState != "transcribing" && state.engineState != "error"
     }
 
     private var statusColor: Color {
