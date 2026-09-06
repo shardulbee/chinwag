@@ -132,12 +132,12 @@ final class AppState: ObservableObject {
 @MainActor
 final class ServiceClient {
     private let state: AppState
-    private let baseURL: URL
+    private let engine: TranscriptionEngine
     private var pollingTask: Task<Void, Never>?
 
-    init(state: AppState) {
+    init(state: AppState, engine: TranscriptionEngine) {
         self.state = state
-        self.baseURL = URL(string: "http://127.0.0.1:3212")!
+        self.engine = engine
     }
 
     func startPolling() {
@@ -167,80 +167,29 @@ final class ServiceClient {
     }
 
     func transcribe(fileURL: URL) async throws -> String {
-        let currentHealth = try await health()
-        guard currentHealth.model == "cohere-transcribe-03-2026-Q4_K_M" else {
-            throw ServiceClientError.failed("Unexpected service on the transcription port")
+        let engine = self.engine
+        let cancellation = TranscriptionCancellation()
+        return try await withTaskCancellationHandler {
+            try await Task.detached(priority: .userInitiated) {
+                let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
+                guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= 25 * 1024 * 1024 else {
+                    throw TranscriptionFailure(status: 413, message: "audio upload is too large")
+                }
+                let input = TranscriptionInput(contents: try Data(contentsOf: fileURL),
+                                               filename: "dictation.m4a", mimeType: "audio/mp4", language: "")
+                return try await withCheckedThrowingContinuation { continuation in
+                    engine.transcribe(input, cancellation: cancellation) { result in
+                        continuation.resume(with: result.map(\.text))
+                    }
+                }
+            }.value
+        } onCancel: {
+            cancellation.cancel()
         }
-        guard currentHealth.state == "ready" || currentHealth.state == "transcribing" else {
-            throw ServiceClientError.failed(currentHealth.error ?? "Transcription model unavailable")
-        }
-
-        let boundary = "TranscribeBoundary-\(UUID().uuidString)"
-        var body = Data()
-        body.appendMultipart("--\(boundary)\r\n")
-        body.appendMultipart("Content-Disposition: form-data; name=\"model\"\r\n\r\n")
-        body.appendMultipart("cohere-transcribe-03-2026-Q4_K_M\r\n")
-        body.appendMultipart("--\(boundary)\r\n")
-        body.appendMultipart("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
-        body.appendMultipart("json\r\n")
-        body.appendMultipart("--\(boundary)\r\n")
-        body.appendMultipart("Content-Disposition: form-data; name=\"file\"; filename=\"dictation.m4a\"\r\n")
-        body.appendMultipart("Content-Type: audio/mp4\r\n\r\n")
-        body.append(try Data(contentsOf: fileURL))
-        body.appendMultipart("\r\n--\(boundary)--\r\n")
-
-        var request = URLRequest(url: baseURL.appending(path: "v1/audio/transcriptions"))
-        request.httpMethod = "POST"
-        request.httpBody = body
-        request.timeoutInterval = 125
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
-        guard http.statusCode == 200 else {
-            if let envelope = try? JSONDecoder().decode(ServiceErrorEnvelope.self, from: data) {
-                throw ServiceClientError.failed(envelope.error.message)
-            }
-            throw ServiceClientError.failed("Transcription failed (HTTP \(http.statusCode))")
-        }
-        let value = try JSONDecoder().decode(TranscriptionResponse.self, from: data)
-        let text = value.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if text.isEmpty { throw ServiceClientError.failed("No speech detected") }
-        return text
     }
 
     private func health() async throws -> ServiceHealth {
-        var request = URLRequest(url: baseURL.appending(path: "healthz"))
-        request.cachePolicy = .reloadIgnoringLocalCacheData
-        request.timeoutInterval = 2
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw URLError(.badServerResponse)
-        }
+        let data = try JSONSerialization.data(withJSONObject: engine.health())
         return try JSONDecoder().decode(ServiceHealth.self, from: data)
-    }
-}
-
-private struct TranscriptionResponse: Decodable {
-    let text: String
-}
-
-private struct ServiceErrorEnvelope: Decodable {
-    struct ServiceError: Decodable { let message: String }
-    let error: ServiceError
-}
-
-private enum ServiceClientError: LocalizedError {
-    case failed(String)
-
-    var errorDescription: String? {
-        switch self {
-        case let .failed(message): return message
-        }
-    }
-}
-
-private extension Data {
-    mutating func appendMultipart(_ string: String) {
-        append(string.data(using: .utf8)!)
     }
 }

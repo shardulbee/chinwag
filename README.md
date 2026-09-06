@@ -8,10 +8,9 @@ Local push-to-talk dictation for macOS, powered by Cohere Transcribe on Apple Me
 
 ## Install
 
-Requires Apple silicon, macOS 14+, [mise](https://mise.jdx.dev/), and Xcode command-line tools.
+Requires Apple silicon, macOS 14+, and Xcode command-line tools.
 
 ```sh
-mise install
 scripts/service install
 ```
 
@@ -28,7 +27,7 @@ scripts/service status
 scripts/service uninstall
 ```
 
-The model stays loaded when you quit the menu app.
+Dictation and API clients share one loaded model. Quitting Chinwag stops the API and unloads the model. Installing replaces the old separate service LaunchAgent if present.
 
 ## API
 
@@ -47,3 +46,5 @@ No API key required. Use `not-needed` if your client requires one. Loopback only
 ```sh
 scripts/check
 ```
+
+With the model installed, `python3 tests/integration/run.py` tests real Metal transcription and measures warm API latency.

@@ -169,6 +169,12 @@ final class DictationController {
         hotKey.onRelease = { [weak self] in self?.finishDictation() }
     }
 
+    func shutdown() {
+        hotKey.onPress = nil
+        hotKey.onRelease = nil
+        recorder.cleanup()
+    }
+
     private func beginDictation() {
         guard state.activity == .idle else { return }
         permissions.refresh()

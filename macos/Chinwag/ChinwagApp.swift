@@ -18,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let state = AppState()
     private let permissions = PermissionManager()
     private let hotKey = GlobalHotKey()
+    private let engine = TranscriptionEngine()
+    private var httpServer: TranscriptionHTTPServer?
     private var service: ServiceClient!
     private var modelInstaller: ModelInstaller!
     private var dictation: DictationController!
@@ -31,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        service = ServiceClient(state: state)
+        service = ServiceClient(state: state, engine: engine)
         modelInstaller = ModelInstaller(state: state)
         dictation = DictationController(
             state: state,
@@ -52,6 +54,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         service.startPolling()
         updateStatusItem()
 
+        if ProcessInfo.processInfo.environment["TRANSCRIBE_FIXTURE"] == nil {
+            let server = TranscriptionHTTPServer(engine: engine)
+            do {
+                try server.start()
+                httpServer = server
+                engine.start(
+                    modelURL: FileManager.default.homeDirectoryForCurrentUser
+                        .appending(path: ".local/share/chinwag/models/\(ModelInstaller.filename)"),
+                    libraryURL: Bundle.main.bundleURL.appending(path: "Contents/Frameworks"))
+            } catch {
+                service.stopPolling()
+                state.engineState = "error"
+                state.engineError = "Could not start the API on port 3212. Quit any other Chinwag instance and relaunch."
+                modelInstaller.start()
+                return
+            }
+        }
+
         #if DEBUG
         if ProcessInfo.processInfo.environment["TRANSCRIBE_FIXTURE"] == nil {
             modelInstaller.start()
@@ -65,6 +85,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         service.stopPolling()
+        httpServer?.stop()
+        dictation.shutdown()
+        engine.shutdown()
         loadingTimer?.invalidate()
     }
 

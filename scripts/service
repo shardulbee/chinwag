@@ -9,8 +9,6 @@ menu_plist="$HOME/Library/LaunchAgents/$menu_label.plist"
 state_dir="$HOME/.local/state/chinwag"
 runtime_dir="$HOME/.local/share/chinwag/runtime"
 installed_app="$HOME/Applications/Chinwag.app"
-built_service="$root/dist/chinwag-service"
-built_library_dir="$root/dist/lib"
 
 usage() {
   echo "Usage: scripts/service {run|install [--adhoc | --sign IDENTITY]|status|uninstall}" >&2
@@ -18,11 +16,11 @@ usage() {
 }
 
 run_service() {
-  [[ -x "$built_service" && -s "$built_library_dir/libtranscribe.dylib" ]] || {
-    echo "Build the Go service first with scripts/build-service" >&2
+  [[ -x "$root/dist/Chinwag.app/Contents/MacOS/Chinwag" ]] || {
+    echo "Build Chinwag first with scripts/build-app" >&2
     exit 1
   }
-  exec "$built_service"
+  exec "$root/dist/Chinwag.app/Contents/MacOS/Chinwag"
 }
 
 new_plist() {
@@ -52,7 +50,6 @@ install_agents() {
     echo "LaunchAgent installation requires macOS" >&2
     exit 1
   }
-  "$root/scripts/build-service" >/dev/null
   if [[ $# -gt 0 ]]; then
     "$root/scripts/build-app" "$@" >/dev/null
   else
@@ -61,12 +58,12 @@ install_agents() {
 
   mkdir -p "$HOME/Library/LaunchAgents" "$HOME/Applications" "$state_dir"
   chmod 700 "$state_dir"
+  local domain="gui/$(id -u)"
+  # Migrate installations that used a separate Go engine LaunchAgent.
+  launchctl bootout "$domain/$engine_label" 2>/dev/null || true
+  launchctl bootout "$domain/$menu_label" 2>/dev/null || true
+  rm -f "$engine_plist"
   rm -rf "$runtime_dir"
-  mkdir -p "$runtime_dir/lib"
-  chmod 700 "$runtime_dir" "$runtime_dir/lib"
-  cp "$built_service" "$runtime_dir/chinwag-service"
-  ditto "$built_library_dir" "$runtime_dir/lib"
-  chmod 700 "$runtime_dir/chinwag-service"
 
   rm -rf "$installed_app"
   ditto "$root/dist/Chinwag.app" "$installed_app"
@@ -74,17 +71,6 @@ install_agents() {
   local lsregister="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
   "$lsregister" -f "$installed_app" >/dev/null 2>&1 || true
   mdimport -i "$installed_app" >/dev/null 2>&1 || true
-
-  new_plist "$engine_plist"
-  plist_string "$engine_plist" Label "$engine_label"
-  plist_array "$engine_plist" ProgramArguments "$runtime_dir/chinwag-service"
-  plist_string "$engine_plist" WorkingDirectory "$runtime_dir"
-  plist_bool "$engine_plist" RunAtLoad true
-  plist_bool "$engine_plist" KeepAlive true
-  plist_string "$engine_plist" ProcessType Interactive
-  plist_string "$engine_plist" StandardOutPath "$state_dir/service.log"
-  plist_string "$engine_plist" StandardErrorPath "$state_dir/service.log"
-  plutil -insert ThrottleInterval -integer 5 "$engine_plist"
 
   new_plist "$menu_plist"
   plist_string "$menu_plist" Label "$menu_label"
@@ -95,24 +81,16 @@ install_agents() {
   plist_string "$menu_plist" StandardOutPath "$state_dir/menu.log"
   plist_string "$menu_plist" StandardErrorPath "$state_dir/menu.log"
 
-  local domain="gui/$(id -u)"
-  launchctl bootout "$domain/$engine_label" 2>/dev/null || true
-  launchctl bootout "$domain/$menu_label" 2>/dev/null || true
   sleep 1
-  if ! launchctl bootstrap "$domain" "$engine_plist"; then
-    sleep 1
-    launchctl bootstrap "$domain" "$engine_plist"
-  fi
   if ! launchctl bootstrap "$domain" "$menu_plist"; then
     sleep 1
     launchctl bootstrap "$domain" "$menu_plist"
   fi
-  launchctl kickstart "$domain/$engine_label"
   launchctl kickstart "$domain/$menu_label"
 
   local engine_pid health ready=0
   for _ in {1..60}; do
-    engine_pid="$(launchctl print "$domain/$engine_label" 2>/dev/null \
+    engine_pid="$(launchctl print "$domain/$menu_label" 2>/dev/null \
       | awk '/^[[:space:]]*pid =/{print $3; exit}')"
     health="$(curl --silent --max-time 1 \
       "http://127.0.0.1:3212/healthz" 2>/dev/null || true)"
@@ -124,8 +102,8 @@ install_agents() {
     sleep 0.5
   done
   if [[ "$ready" != 1 ]]; then
-    echo "LaunchAgents were installed, but the transcription service did not become ready." >&2
-    echo "Inspect $state_dir/service.log and run scripts/service status." >&2
+    echo "Chinwag was installed, but its API did not become available." >&2
+    echo "Inspect $state_dir/menu.log and run scripts/service status." >&2
     return 1
   fi
 
@@ -135,8 +113,6 @@ install_agents() {
 
 status_agents() {
   local domain="gui/$(id -u)"
-  launchctl print "$domain/$engine_label" 2>/dev/null \
-    | grep -E '^\s*(state|pid|last exit code) =' || true
   launchctl print "$domain/$menu_label" 2>/dev/null \
     | grep -E '^\s*(state|pid|last exit code) =' || true
   curl --fail --silent --show-error "http://127.0.0.1:3212/healthz" || true

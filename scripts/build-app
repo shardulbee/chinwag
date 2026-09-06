@@ -98,6 +98,14 @@ cp "$root/macos/Chinwag/Assets/ChinwagMenuTemplate.png" "$resources/"
 cp "$root/macos/Chinwag/Assets/ChinwagMenuTemplate@2x.png" "$resources/"
 
 arch="$(uname -m)"
+"$root/scripts/fetch-native"
+native="$root/artifacts/transcribe-native-macos-arm64-metal"
+mkdir -p "$contents/Frameworks"
+cp "$native"/*.dylib "$contents/Frameworks/"
+cp "$native/contract.json" "$resources/"
+cp -R "$native/licenses" "$resources/"
+xcrun clang -O2 -mmacosx-version-min=14.0 -c "$root/macos/Chinwag/Native/ChinwagNativeBridge.c" \
+  -o "$icon_tmp/native.o"
 compile_flags=(-swift-version 5 -parse-as-library -target "${arch}-apple-macos14.0")
 if [[ "$configuration" == debug ]]; then
   compile_flags+=(-D DEBUG -Onone -g)
@@ -108,6 +116,9 @@ fi
 sources=("$root"/macos/Chinwag/*.swift)
 xcrun swiftc \
   "${compile_flags[@]}" \
+  -import-objc-header "$root/macos/Chinwag/Native/Chinwag-Bridging-Header.h" \
+  -L "$native" -ltranscribe -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
+  "$icon_tmp/native.o" \
   -framework AppKit \
   -framework ApplicationServices \
   -framework AVFoundation \
@@ -133,6 +144,9 @@ elif [[ -z "$signing_identity" ]]; then
 fi
 
 if [[ "$signing_identity" == "-" ]]; then
+  for library in "$contents/Frameworks/"*.dylib; do
+    codesign --force --sign - --timestamp=none "$library" >/dev/null
+  done
   codesign --force --sign - --timestamp=none "$app" >/dev/null
   printf '%s\n' "$app"
   exit 0
@@ -144,7 +158,13 @@ identities="$(security find-identity -v -p codesigning 2>/dev/null || true)"
   exit 1
 }
 sign_error="$icon_tmp/codesign.error"
-if codesign --force --sign "$signing_identity" --timestamp=none "$app" 2>"$sign_error"; then
+sign_bundle() {
+  for library in "$contents/Frameworks/"*.dylib; do
+    codesign --force --sign "$signing_identity" --timestamp=none "$library" || return
+  done
+  codesign --force --sign "$signing_identity" --timestamp=none "$app"
+}
+if sign_bundle 2>"$sign_error"; then
   printf '%s\n' "$app"
   exit 0
 fi
@@ -155,6 +175,11 @@ signer="$icon_tmp/ChinwagSigner.app"
 mkdir -p "$signer/Contents/MacOS"
 {
   echo '#!/bin/bash'
+  echo 'set -e'
+  for library in "$contents/Frameworks/"*.dylib; do
+    printf '/usr/bin/codesign --force --sign %q --timestamp=none %q\n' \
+      "$signing_identity" "$library"
+  done
   printf 'exec /usr/bin/codesign --force --sign %q --timestamp=none %q\n' \
     "$signing_identity" "$app"
 } > "$signer/Contents/MacOS/ChinwagSigner"

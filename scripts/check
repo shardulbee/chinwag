@@ -4,20 +4,9 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-unformatted="$(gofmt -l cmd internal)"
-if [[ -n "$unformatted" ]]; then
-  echo "Go files need formatting:" >&2
-  printf '%s\n' "$unformatted" >&2
-  exit 1
-fi
-
 "$root/scripts/fetch-native"
-native="$root/artifacts/transcribe-native-macos-arm64-metal"
-export SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
-export CGO_LDFLAGS="-Wl,-rpath,$native${CGO_LDFLAGS:+ $CGO_LDFLAGS}"
-export DYLD_LIBRARY_PATH="$native${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-go vet ./...
-go test ./...
+"$root/tests/engine/run.sh"
+"$root/tests/http/run.sh"
 
 arch="$(uname -m)"
 xcrun swiftc \
@@ -25,6 +14,7 @@ xcrun swiftc \
   -parse-as-library \
   -target "${arch}-apple-macos14.0" \
   -typecheck \
+  -import-objc-header macos/Chinwag/Native/Chinwag-Bridging-Header.h \
   -framework AppKit \
   -framework ApplicationServices \
   -framework AVFoundation \
@@ -34,5 +24,5 @@ xcrun swiftc \
   -framework SwiftUI \
   macos/Chinwag/*.swift
 
-bash -n scripts/build-app scripts/build-service scripts/check scripts/fetch-native scripts/service
+bash -n scripts/build-app scripts/check scripts/fetch-native scripts/service
 plutil -lint macos/Chinwag/Info.plist >/dev/null
