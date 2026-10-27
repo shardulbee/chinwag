@@ -1,0 +1,87 @@
+{
+  "audioSeconds": 24.8775625,
+  "reference": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Everything here runs locally, and the existing dictation shortcut should keep working.\n",
+  "results": [
+    {
+      "model": "chinwag-chunked",
+      "firstPartialMs": 4614.6,
+      "endToFinalMs": 111.9,
+      "partialCount": 9,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends. The final transcript should arrive quickly. without losing the last sentence. Everything here runs locally. and the existing dictation shortcut should keep working.",
+      "werPercent": 0.0
+    },
+    {
+      "model": "nemotron-speech-streaming-en-0.6b",
+      "firstPartialMs": 1088.2,
+      "endToFinalMs": 65.8,
+      "partialCount": 22,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The Quick Brown Fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Everything here runs locally, and the existing dictation shortcut should keep working.",
+      "werPercent": 0.0
+    },
+    {
+      "model": "nemotron-3.5-asr-streaming-0.6b",
+      "firstPartialMs": 1104.5,
+      "endToFinalMs": 78.4,
+      "partialCount": 22,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly without losing the last sentence everything here runs locally, and the existing dictation shortcut should keep working.",
+      "werPercent": 0.0
+    },
+    {
+      "model": "parakeet-unified-en-0.6b",
+      "firstPartialMs": 2084.8,
+      "endToFinalMs": 109.3,
+      "partialCount": 22,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Everything here runs locally, and the existing dictation shortcut should keep working",
+      "werPercent": 0.0
+    },
+    {
+      "model": "moonshine-streaming-tiny",
+      "firstPartialMs": 461.0,
+      "endToFinalMs": 309.8,
+      "partialCount": 71,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick-brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Everything here runs locally, and the existing dictation shortcut should keep working.",
+      "werPercent": 0.0
+    },
+    {
+      "model": "moonshine-streaming-small",
+      "firstPartialMs": 501.4,
+      "endToFinalMs": 2710.0,
+      "partialCount": 72,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Everything here runs locally, and the existing dictation shortcut should keep working.",
+      "werPercent": 0.0
+    },
+    {
+      "model": "moonshine-voice-medium",
+      "firstPartialMs": 496.0,
+      "endToFinalMs": 89.5,
+      "partialCount": 45,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow. Tomorrow afternoon, we want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Sentence everything here runs locally and the existing dictation shortcut should keep working",
+      "werPercent": 2.9
+    },
+    {
+      "model": "chinwag-batch",
+      "firstPartialMs": null,
+      "endToFinalMs": 502.3,
+      "text": "This recording compares local streaming speech recognition on an Apple computer. The quick brown fox jumps over the lazy dog. Please bring seven green notebooks to the meeting tomorrow afternoon. We want the first words to appear while someone is still speaking. When the recording ends, the final transcript should arrive quickly, without losing the last sentence. Everything here runs locally, and the existing dictation shortcut should keep working.",
+      "werPercent": 0.0
+    }
+  ],
+  "environment": {
+    "date": "2026-10-27",
+    "machine": "Apple M3 Max, 128 GiB RAM",
+    "nativeVersion": "0.2.1",
+    "moonshineVoiceVersion": "0.1.5",
+    "nativeQuantization": "Q8_0",
+    "audioSource": "macOS say, Samantha, 170 words/min",
+    "cadenceMs": 100,
+    "warmup": "1s silence per model",
+    "runsPerModel": 1,
+    "comparison": "Sequential local streams, not a simultaneous contention test"
+  },
+  "unavailableModels": [
+    {
+      "id": "moonshine-streaming-medium",
+      "reason": "Native 0.2.1 partial at 4.9s loops 12-inch and sets sticky truncation flag; correct final text does not clear it. Stream returns structured inference_failed instead of a final."
+    }
+  ]
+}

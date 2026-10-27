@@ -41,6 +41,8 @@ Model     whisper-1
 
 No API key required. Use `not-needed` if your client requires one. Loopback only, no HTTP authentication. Keep it private.
 
+Optional [live transcription sidecar](live/README.md): WebSocket PCM streaming on port 3213, with selectable warm local models and pause-chunked Cohere. The app and batch API are unchanged.
+
 ## Check
 
 ```sh
