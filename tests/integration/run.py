@@ -79,6 +79,7 @@ with tempfile.TemporaryDirectory(prefix='chinwag-integration-') as directory:
         else:
             raise AssertionError('model did not load')
         assert status['backend'] == 'Metal'
+        assert status['model'] == args.batch_model, status
         servers = {'swift': base}
         if args.baseline:
             servers['baseline'] = args.baseline.rstrip('/')
@@ -108,7 +109,8 @@ with tempfile.TemporaryDirectory(prefix='chinwag-integration-') as directory:
             assert result['finals'] == 1 and result['partials'] > 0 and 'error' not in result, result
             assert 'recording' in result['text'].lower(), result
         assert live.stream('ws://127.0.0.1:3219/v1/live?model=unknown', str(audio), realtime=False)['error']
-        print(json.dumps({'live': {key: results[0][key] for key in ['partials', 'endToFinalMs', 'text']},'audioSeconds': health(base)['lastTranscription']['audioSeconds'],
+        print(json.dumps({'live': {key: results[0][key] for key in ['partials', 'text']},
+                          'audioSeconds': health(base)['lastTranscription']['audioSeconds'],
                           'warmRequestMs': timings,
                           'medianMs': {name: round(statistics.median(values), 1) for name, values in timings.items()},
                           'matchingTranscripts': not args.baseline or transcripts['swift'] == transcripts['baseline']}, indent=2))

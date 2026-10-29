@@ -18,4 +18,3 @@ runtime/
 *.webm
 DerivedData/
 xcuserdata/
-__pycache__/
