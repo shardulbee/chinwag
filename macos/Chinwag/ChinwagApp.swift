@@ -60,8 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 try server.start()
                 httpServer = server
                 engine.start(
-                    modelURL: FileManager.default.homeDirectoryForCurrentUser
-                        .appending(path: ".local/share/chinwag/models/\(ModelInstaller.filename)"),
+                    modelsDirectory: ModelInstaller.directory,
                     libraryURL: Bundle.main.bundleURL.appending(path: "Contents/Frameworks"))
             } catch {
                 service.stopPolling()
@@ -196,13 +195,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     state: state,
                     permissions: permissions,
                     hotKey: hotKey,
-                    retryModelDownload: { [weak self] in self?.modelInstaller.retry() }))
+                    retryModelDownload: { [weak self] in self?.modelInstaller.retry() },
+                    modelChanged: { [weak self] in
+                        guard let self else { return }
+                        self.state.modelDisplayName = ModelSpec.selected.displayName
+                        self.modelInstaller.start()
+                        self.engine.ensureLoaded()
+                    }))
             let window = NSWindow(contentViewController: controller)
             window.title = "Chinwag"
             window.styleMask = [.closable, .miniaturizable, .titled]
-            window.setContentSize(NSSize(width: 500, height: 420))
-            window.minSize = NSSize(width: 500, height: 420)
-            window.maxSize = NSSize(width: 500, height: 420)
+            window.setContentSize(NSSize(width: 500, height: 480))
+            window.minSize = NSSize(width: 500, height: 480)
+            window.maxSize = NSSize(width: 500, height: 480)
             window.isReleasedWhenClosed = false
             window.center()
             settingsWindow = window

@@ -38,7 +38,7 @@ final class AppState: ObservableObject {
     @Published var engineError: String?
     @Published var backend = "Metal"
     @Published var device = "Apple GPU"
-    @Published var modelDisplayName = "Cohere Transcribe 03-2026 · Q4"
+    @Published var modelDisplayName = ModelSpec.selected.displayName
     @Published var lastTranscription: ServiceHealth.LastTranscription?
     @Published var modelInstall: ModelInstallState = .checking
     @Published var notice: String?
@@ -85,7 +85,8 @@ final class AppState: ObservableObject {
     }
 
     var isReady: Bool {
-        modelInstall == .ready && engineState == "ready" && activity == .idle
+        // API work in progress does not block dictation; it queues on the shared model.
+        modelInstall == .ready && ["ready", "transcribing"].contains(engineState) && activity == .idle
     }
 
     var modelDownloadError: String? {
@@ -121,7 +122,7 @@ final class AppState: ObservableObject {
         modelInstall = .ready
         backend = "Metal"
         device = "Apple M3 Max"
-        modelDisplayName = "Cohere Transcribe 03-2026 · Q4"
+        modelDisplayName = ModelSpec.parakeet.displayName
         lastTranscription = .init(
             audioSeconds: 35.2,
             completedAt: ISO8601DateFormatter().string(from: Date().addingTimeInterval(-84)),
@@ -166,23 +167,24 @@ final class ServiceClient {
         }
     }
 
-    func transcribe(fileURL: URL) async throws -> String {
+    func beginLive() throws -> LiveSession { try engine.beginLive() }
+
+    func finish(_ live: LiveSession) async throws -> String {
+        let text = try await withCheckedThrowingContinuation { continuation in live.finish { continuation.resume(with: $0) } }
+        guard !text.isEmpty else { throw TranscriptionFailure(status: 422, message: "No speech detected") }
+        return text
+    }
+
+    func transcribe(wav: Data) async throws -> String {
         let engine = self.engine
         let cancellation = TranscriptionCancellation()
+        let input = TranscriptionInput(contents: wav, filename: "dictation.wav", mimeType: "audio/wav", language: "")
         return try await withTaskCancellationHandler {
-            try await Task.detached(priority: .userInitiated) {
-                let attributes = try FileManager.default.attributesOfItem(atPath: fileURL.path)
-                guard (attributes[.size] as? NSNumber)?.intValue ?? 0 <= 25 * 1024 * 1024 else {
-                    throw TranscriptionFailure(status: 413, message: "audio upload is too large")
+            try await withCheckedThrowingContinuation { continuation in
+                engine.transcribe(input, cancellation: cancellation) { result in
+                    continuation.resume(with: result.map(\.text))
                 }
-                let input = TranscriptionInput(contents: try Data(contentsOf: fileURL),
-                                               filename: "dictation.m4a", mimeType: "audio/mp4", language: "")
-                return try await withCheckedThrowingContinuation { continuation in
-                    engine.transcribe(input, cancellation: cancellation) { result in
-                        continuation.resume(with: result.map(\.text))
-                    }
-                }
-            }.value
+            }
         } onCancel: {
             cancellation.cancel()
         }

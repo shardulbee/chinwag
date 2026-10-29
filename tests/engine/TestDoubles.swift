@@ -17,6 +17,14 @@ final class NativeModel {
         return ["test"]
     }
     func close() {}
+    func beginStream(language: String) throws -> NativeStream { NativeStream() }
+}
+
+final class NativeStream {
+    private var samples = 0
+    func feed(_ chunk: [Float]) throws -> String { samples += chunk.count; return "um \(samples)" }
+    func finalize() throws -> String { "Um, I I heard the the \(samples) samples." }
+    func close() {}
 }
 
 #if ENGINE_TEST

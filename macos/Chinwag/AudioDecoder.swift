@@ -8,7 +8,7 @@ struct PCM16Audio {
 
 enum AudioDecoder {
     static let batchSize = 6
-    private static let maximumAudioSeconds = 10 * 60
+    private static let maximumAudioSeconds = 30 * 60
     private static let maximumDecodedBytes = maximumAudioSeconds * 16_000 * 2 + 1024 * 1024
     private static let extensions = [
         "audio/aac": "aac", "audio/flac": "flac", "audio/mp4": "m4a",
@@ -56,11 +56,11 @@ enum AudioDecoder {
         }
         let attributes = try FileManager.default.attributesOfItem(atPath: output.path)
         if (attributes[.size] as? NSNumber)?.intValue ?? 0 > maximumDecodedBytes {
-            throw message("audio recording exceeds the 10 minute local transcription limit")
+            throw message("audio recording exceeds the 30 minute local transcription limit")
         }
         let wav = try parseWAV(Data(contentsOf: output))
         if wav.sampleCount > maximumAudioSeconds * wav.sampleRate {
-            throw message("audio recording exceeds the 10 minute local transcription limit")
+            throw message("audio recording exceeds the 30 minute local transcription limit")
         }
         return wav
     }

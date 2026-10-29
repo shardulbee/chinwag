@@ -3,11 +3,8 @@ import Foundation
 
 @MainActor
 final class ModelInstaller: ObservableObject {
-    static let filename = "cohere-transcribe-03-2026-Q4_K_M.gguf"
-    static let byteCount: Int64 = 1_558_162_944
-    static let sha256 = "0ea56826d8bd5d74b7143a4a04e022dc1bb75452cfae49d98b6acb0c1d16a1fb"
-    static let downloadURL = URL(
-        string: "https://huggingface.co/handy-computer/cohere-transcribe-03-2026-gguf/resolve/dfa4adebb64f3076b7b6b90b721275cc069cb421/\(filename)?download=true")!
+    static let directory = FileManager.default.homeDirectoryForCurrentUser
+        .appending(path: ".local/share/chinwag/models", directoryHint: .isDirectory)
 
     private let state: AppState
     private var installTask: Task<Void, Never>?
@@ -20,7 +17,7 @@ final class ModelInstaller: ObservableObject {
         guard installTask == nil else { return }
         state.modelInstall = .checking
         installTask = Task { [weak self] in
-            await self?.install()
+            await self?.installRequired()
             self?.installTask = nil
         }
     }
@@ -30,13 +27,22 @@ final class ModelInstaller: ObservableObject {
         start()
     }
 
-    private func install() async {
+    /// Installs Parakeet, then the Cohere fallback while it is selected, rechecking after each model.
+    private func installRequired() async {
+        var installed: Set<String> = []
+        while let spec = ModelSpec.required.first(where: { !installed.contains($0.id) }) {
+            guard await install(spec) else { return }
+            installed.insert(spec.id)
+        }
+        state.modelInstall = .ready
+    }
+
+    private func install(_ spec: ModelSpec) async -> Bool {
         let manager = FileManager.default
-        let directory = manager.homeDirectoryForCurrentUser
-            .appending(path: ".local/share/chinwag/models", directoryHint: .isDirectory)
-        let model = directory.appending(path: Self.filename)
+        let directory = Self.directory
+        let model = directory.appending(path: spec.filename)
         let marker = model.appendingPathExtension("sha256")
-        let download = directory.appending(path: ".\(Self.filename).download")
+        let download = directory.appending(path: ".\(spec.filename).download")
 
         do {
             try manager.createDirectory(
@@ -50,40 +56,37 @@ final class ModelInstaller: ObservableObject {
             let isRegularFile = (attributes?[.type] as? FileAttributeType) == .typeRegular
             let savedHash = try? String(contentsOf: marker, encoding: .utf8)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            if isRegularFile, size == Self.byteCount, savedHash == Self.sha256 {
+            if isRegularFile, size == spec.bytes, savedHash == spec.sha256 {
                 try secure(model: model, marker: marker)
-                state.modelInstall = .ready
-                return
+                return true
             }
 
-            if isRegularFile, size == Self.byteCount {
+            if isRegularFile, size == spec.bytes {
                 let digest = try await Task.detached(priority: .utility) {
                     try Self.digest(of: model)
                 }.value
-                if digest == Self.sha256 {
-                    try writeMarker(marker)
+                if digest == spec.sha256 {
+                    try writeMarker(marker, spec)
                     try secure(model: model, marker: marker)
-                    state.modelInstall = .ready
-                    return
+                    return true
                 }
             }
 
             let downloadAttributes = try? manager.attributesOfItem(atPath: download.path)
             let downloadSize = (downloadAttributes?[.size] as? NSNumber)?.int64Value
             let downloadIsRegular = (downloadAttributes?[.type] as? FileAttributeType) == .typeRegular
-            if downloadIsRegular, downloadSize == Self.byteCount {
+            if downloadIsRegular, downloadSize == spec.bytes {
                 state.modelInstall = .downloading(1)
                 let digest = try await Task.detached(priority: .utility) {
                     try Self.digest(of: download)
                 }.value
-                if digest == Self.sha256 {
+                if digest == spec.sha256 {
                     try? manager.removeItem(at: model)
                     try? manager.removeItem(at: marker)
                     try manager.moveItem(at: download, to: model)
-                    try writeMarker(marker)
+                    try writeMarker(marker, spec)
                     try secure(model: model, marker: marker)
-                    state.modelInstall = .ready
-                    return
+                    return true
                 }
             }
 
@@ -98,29 +101,30 @@ final class ModelInstaller: ObservableObject {
                     self.state.modelInstall = .downloading(progress)
                 }
             }
-            let downloaded = try await downloader.run(url: Self.downloadURL)
+            let downloaded = try await downloader.run(url: spec.url)
             let downloadedSize = try manager.attributesOfItem(atPath: downloaded.path)[.size]
                 as? NSNumber
-            guard downloadedSize?.int64Value == Self.byteCount else {
+            guard downloadedSize?.int64Value == spec.bytes else {
                 throw ModelInstallError.invalidDownload
             }
             let digest = try await Task.detached(priority: .utility) {
                 try Self.digest(of: downloaded)
             }.value
-            guard digest == Self.sha256 else { throw ModelInstallError.invalidDownload }
+            guard digest == spec.sha256 else { throw ModelInstallError.invalidDownload }
 
             try manager.moveItem(at: downloaded, to: model)
-            try writeMarker(marker)
+            try writeMarker(marker, spec)
             try secure(model: model, marker: marker)
-            state.modelInstall = .ready
+            return true
         } catch {
             try? manager.removeItem(at: download)
-            state.modelInstall = .failed("Could not download the model. Check your connection and retry.")
+            state.modelInstall = .failed("Could not download \(spec.displayName). Check your connection and retry.")
+            return false
         }
     }
 
-    private func writeMarker(_ marker: URL) throws {
-        try Self.sha256.write(to: marker, atomically: true, encoding: .utf8)
+    private func writeMarker(_ marker: URL, _ spec: ModelSpec) throws {
+        try spec.sha256.write(to: marker, atomically: true, encoding: .utf8)
     }
 
     private func secure(model: URL, marker: URL) throws {

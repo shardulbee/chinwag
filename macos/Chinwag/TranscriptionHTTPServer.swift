@@ -1,5 +1,6 @@
-import Foundation
+import CryptoKit
 import Darwin
+import Foundation
 
 /// The loopback HTTP adapter used by OpenAI-compatible transcription clients.
 final class TranscriptionHTTPServer {
@@ -7,6 +8,9 @@ final class TranscriptionHTTPServer {
     private static let maximumUploadBytes = 25 * 1024 * 1024
     private static let maximumRequestBytes = maximumUploadBytes + 1_000_000
     private static let requestTimeout: TimeInterval = 30
+    private static let liveIdleTimeout: TimeInterval = 30
+    private static let maximumLiveMessageBytes = 1024 * 1024
+    private static let cors = "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Methods: GET, OPTIONS\r\nAccess-Control-Allow-Private-Network: true\r\n"
 
     private let engine: TranscriptionEngine
     private let port: UInt16
@@ -115,11 +119,22 @@ final class TranscriptionHTTPServer {
                 }
                 headers[name, default: []].append(line[line.index(after: colon)...].trimmingCharacters(in: .whitespaces))
             }
-            if headers["origin"] != nil || headers["sec-fetch-site"] != nil {
+            let method = String(words[0]), target = words[1].split(separator: "?", maxSplits: 1)
+            let path = String(target[0])
+            // Live endpoints serve browser clients such as Choux; the batch API stays non-browser only.
+            if !path.hasPrefix("/v1/live"), headers["origin"] != nil || headers["sec-fetch-site"] != nil {
                 throw HTTPError(403, "browser requests are not allowed")
             }
-            let method = String(words[0]), path = String(words[1].split(separator: "?", maxSplits: 1)[0])
             if method == "GET", path == "/healthz" { sendJSON(fd, 200, engine.health()); return }
+            if method == "OPTIONS", path == "/v1/live/models" { send(fd, 204, "text/plain", Data(), csp: false, extra: Self.cors); return }
+            if method == "GET", path == "/v1/live/models" {
+                sendJSON(fd, 200, ["object": "list", "data": engine.liveModels()], extra: Self.cors); return
+            }
+            if method == "GET", path == "/v1/live" {
+                let model = URLComponents(string: "/?" + (target.count > 1 ? target[1] : ""))?
+                    .queryItems?.first(where: { $0.name == "model" })?.value
+                try serveLive(fd, headers: headers, model: model, reader: &reader); return
+            }
             guard method == "POST", path == "/v1/audio/transcriptions" else { throw HTTPError(404, "not found") }
             try validateMultipartContentType(headers["content-type"] ?? [])
             if headers["expect"]?.count == 1,
@@ -203,6 +218,102 @@ final class TranscriptionHTTPServer {
             if let failure = error as? TranscriptionFailure { sendFailure(fd, failure.status, failure.message) }
             else { sendFailure(fd, 500, error.localizedDescription) }
         }
+    }
+
+    /// WebSocket `/v1/live`: binary 16 kHz mono PCM16 LE frames, then `{"type":"end"}`. Replies with
+    /// `partial` messages, exactly one `final` (then close), or one `error`.
+    private func serveLive(_ fd: Int32, headers: [String: [String]], model: String?, reader: inout SocketReader) throws {
+        func header(_ name: String) -> String { (headers[name] ?? []).joined(separator: ",").lowercased() }
+        guard header("upgrade").contains("websocket"), header("connection").contains("upgrade"),
+              headers["sec-websocket-version"] == ["13"], let key = headers["sec-websocket-key"]?.first, !key.isEmpty
+        else { throw HTTPError(426, "expected a WebSocket upgrade") }
+        let accept = Data(Insecure.SHA1.hash(data: Data((key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").utf8))).base64EncodedString()
+        sendRaw(fd, Data("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: \(accept)\r\n\r\n".utf8))
+        // One writer per connection keeps partials, the final, and control frames ordered off the inference queue.
+        // `open` (output queue only) stops late partials from reaching a reused descriptor.
+        let output = DispatchQueue(label: "com.chinwag.http.live")
+        var open = true
+        func write(_ opcode: UInt8, _ payload: Data) { output.async { if open { self.sendFrame(fd, opcode, payload) } } }
+        func emit(_ object: [String: String]) {
+            if let data = try? JSONSerialization.data(withJSONObject: object) { write(1, data) }
+        }
+        func closeLive(_ code: UInt16, error: String? = nil) {
+            if let error { emit(["type": "error", "message": error]) }
+            write(8, Data([UInt8(code >> 8), UInt8(code & 0xff)]))
+            output.sync { open = false }
+        }
+        let session: LiveSession
+        do { session = try engine.beginLive(model: model) } catch { closeLive(1008, error: error.localizedDescription); return }
+        var ended = false, last = "", message = Data(), kind: UInt8 = 0
+        defer { if !ended { session.cancel() }; output.sync { open = false } }
+        do {
+            while true {
+                reader.deadline = .now() + Self.liveIdleTimeout
+                let (fin, opcode, payload) = try readFrame(&reader)
+                switch opcode {
+                case 8: closeLive(1000); return
+                case 9: write(10, payload); continue
+                case 10: continue
+                case 1 where kind == 0, 2 where kind == 0: kind = opcode; message = payload
+                case 0 where kind != 0: message.append(payload)
+                default: throw HTTPError(1002, "unexpected WebSocket frame")
+                }
+                guard message.count <= Self.maximumLiveMessageBytes else { throw HTTPError(1009, "WebSocket message is too large") }
+                guard fin else { continue }
+                defer { kind = 0; message = Data() }
+                if kind == 2 {
+                    guard !message.isEmpty, message.count % 2 == 0 else {
+                        throw HTTPError(1003, "expected nonempty 16 kHz mono PCM16 little-endian frames")
+                    }
+                    let samples = message.withUnsafeBytes { raw in
+                        (0..<raw.count / 2).map { Float(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: $0 * 2, as: Int16.self))) / 32_768 }
+                    }
+                    session.feed(samples) { text in // Inference queue, in order.
+                        guard !text.isEmpty, text != last else { return }
+                        last = text; emit(["type": "partial", "text": text])
+                    }
+                    continue
+                }
+                let control = (try? JSONSerialization.jsonObject(with: message)) as? [String: Any]
+                guard control?["type"] as? String == "end" else { throw HTTPError(1003, #"expected {"type":"end"}"#) }
+                ended = true
+                let done = DispatchSemaphore(value: 0)
+                var result: Result<String, Error>!
+                session.finish { result = $0; done.signal() }
+                done.wait()
+                switch result! {
+                case .success(let text): emit(["type": "final", "text": text]); closeLive(1000)
+                case .failure(let error): closeLive(1011, error: error.localizedDescription)
+                }
+                return
+            }
+        } catch let error as HTTPError {
+            closeLive(UInt16(error.status), error: error.message)
+        } catch let error as POSIXError where error.code == .EAGAIN || error.code == .ETIMEDOUT {
+            closeLive(1008, error: "the live stream was idle for \(Int(Self.liveIdleTimeout)) seconds")
+        } catch {} // The client disconnected.
+    }
+
+    private func readFrame(_ reader: inout SocketReader) throws -> (Bool, UInt8, Data) {
+        let head = [UInt8](try reader.read(2))
+        guard head[1] & 0x80 != 0 else { throw HTTPError(1002, "client WebSocket frames must be masked") }
+        var length = UInt64(head[1] & 0x7f)
+        if length == 126 { length = try reader.read(2).reduce(0) { $0 << 8 | UInt64($1) } }
+        if length == 127 { length = try reader.read(8).reduce(0) { $0 << 8 | UInt64($1) } }
+        guard length <= UInt64(Self.maximumLiveMessageBytes) else { throw HTTPError(1009, "WebSocket message is too large") }
+        let mask = [UInt8](try reader.read(4))
+        var payload = [UInt8](try reader.read(Int(length)))
+        for index in payload.indices { payload[index] ^= mask[index & 3] }
+        return (head[0] & 0x80 != 0, head[0] & 0x0f, Data(payload))
+    }
+
+    private func sendFrame(_ fd: Int32, _ opcode: UInt8, _ payload: Data) {
+        var frame = Data([0x80 | opcode])
+        if payload.count < 126 { frame.append(UInt8(payload.count)) }
+        else if payload.count <= 0xffff { frame.append(contentsOf: [126, UInt8(payload.count >> 8), UInt8(payload.count & 0xff)]) }
+        else { frame.append(127); frame.append(contentsOf: (0..<8).reversed().map { UInt8(truncatingIfNeeded: payload.count >> ($0 * 8)) }) }
+        frame.append(payload)
+        sendRaw(fd, frame)
     }
 
     private struct Upload { let data: Data, filename: String, mimeType: String, language: String, responseFormat: String }
@@ -319,19 +430,22 @@ final class TranscriptionHTTPServer {
     private func sendFailure(_ fd: Int32, _ status: Int, _ message: String) {
         sendJSON(fd, status, ["error": ["message": message, "type": status < 500 ? "invalid_request_error" : "server_error"]])
     }
-    private func sendJSON(_ fd: Int32, _ status: Int, _ object: Any) {
+    private func sendJSON(_ fd: Int32, _ status: Int, _ object: Any, extra: String = "") {
         var data = (try? JSONSerialization.data(withJSONObject: object)) ?? Data("{\"error\":{\"message\":\"response serialization failed\",\"type\":\"server_error\"}}".utf8)
-        data.append(10); send(fd, status, "application/json; charset=utf-8", data, csp: true)
+        data.append(10); send(fd, status, "application/json; charset=utf-8", data, csp: true, extra: extra)
     }
     private func sendInterimContinue(_ fd: Int32) {
         let response = Data("HTTP/1.1 100 Continue\r\n\r\n".utf8)
         response.withUnsafeBytes { _ = Darwin.send(fd, $0.baseAddress, $0.count, 0) }
     }
-    private func send(_ fd: Int32, _ status: Int, _ type: String, _ body: Data, csp: Bool) {
-        let reasons = [200:"OK", 400:"Bad Request", 403:"Forbidden", 404:"Not Found", 408:"Request Timeout", 411:"Length Required", 413:"Content Too Large", 415:"Unsupported Media Type", 429:"Too Many Requests", 500:"Internal Server Error", 503:"Service Unavailable"]
+    private func send(_ fd: Int32, _ status: Int, _ type: String, _ body: Data, csp: Bool, extra: String = "") {
+        let reasons = [200:"OK", 204:"No Content", 400:"Bad Request", 403:"Forbidden", 404:"Not Found", 408:"Request Timeout", 411:"Length Required", 413:"Content Too Large", 415:"Unsupported Media Type", 426:"Upgrade Required", 429:"Too Many Requests", 500:"Internal Server Error", 503:"Service Unavailable"]
         var head = "HTTP/1.1 \(status) \(reasons[status] ?? "Error")\r\nContent-Type: \(type)\r\nContent-Length: \(body.count)\r\nCache-Control: private, no-store\r\nX-Content-Type-Options: nosniff\r\nConnection: close\r\n"
         if csp { head += "Content-Security-Policy: default-src 'none'; frame-ancestors 'none'\r\n" }
-        var output = Data((head + "\r\n").utf8); output.append(body)
+        var output = Data((head + extra + "\r\n").utf8); output.append(body)
+        sendRaw(fd, output)
+    }
+    private func sendRaw(_ fd: Int32, _ output: Data) {
         output.withUnsafeBytes { bytes in
             var offset = 0
             while offset < bytes.count { let n = Darwin.send(fd, bytes.baseAddress! + offset, bytes.count - offset, 0); if n <= 0 { break }; offset += n }
@@ -340,7 +454,7 @@ final class TranscriptionHTTPServer {
 }
 
 private struct SocketReader {
-    let fd: Int32; let deadline: DispatchTime; var buffer = Data()
+    let fd: Int32; var deadline: DispatchTime; var buffer = Data()
     mutating func fill() throws {
         guard DispatchTime.now() < deadline else { throw POSIXError(.ETIMEDOUT) }
         var bytes = [UInt8](repeating: 0, count: 16 * 1024)

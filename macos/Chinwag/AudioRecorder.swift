@@ -1,87 +1,101 @@
 import AVFoundation
 import Foundation
 
+/// Captures the default microphone as 16 kHz mono float samples while dictation is held.
 @MainActor
 final class DictationRecorder {
     private let state: AppState
-    private var recorder: AVAudioRecorder?
-    private var meterTimer: Timer?
-    private var directoryURL: URL?
+    private var engine: AVAudioEngine?
+    private var startedAt: Date?
 
     init(state: AppState) {
         self.state = state
     }
 
-    func start() throws {
-        guard recorder == nil else { return }
-        let root = FileManager.default.temporaryDirectory
-            .appending(path: "sharpi-dictation-\(UUID().uuidString)", directoryHint: .isDirectory)
-        try FileManager.default.createDirectory(
-            at: root,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700])
-        let output = root.appending(path: "dictation.m4a")
-        let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 16_000,
-            AVNumberOfChannelsKey: 1,
-            AVEncoderBitRateKey: 32_000,
-            AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
-        ]
-        let recorder = try AVAudioRecorder(url: output, settings: settings)
-        recorder.isMeteringEnabled = true
-        guard recorder.prepareToRecord(), recorder.record() else {
-            try? FileManager.default.removeItem(at: root)
+    /// `onSamples` runs on the audio thread for every converted buffer.
+    func start(onSamples: @escaping ([Float]) -> Void) throws {
+        guard engine == nil else { return }
+        let engine = AVAudioEngine()
+        try Self.installTap(on: engine.inputNode, onSamples: onSamples) { [weak self] level in
+            DispatchQueue.main.async { if self?.engine != nil { self?.state.audioLevel = level } }
+        }
+        engine.prepare()
+        do { try engine.start() } catch {
+            engine.inputNode.removeTap(onBus: 0)
             throw RecorderError.couldNotStart
         }
-        directoryURL = root
-        self.recorder = recorder
-        meterTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 24.0, repeats: true) {
-            [weak self] _ in
-            Task { @MainActor in self?.updateMeter() }
+        self.engine = engine
+        startedAt = Date()
+    }
+
+    /// Stops capture after the last buffer has been delivered and returns the recorded duration.
+    @discardableResult
+    func stop() -> TimeInterval {
+        guard let engine else { return 0 }
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        self.engine = nil
+        state.audioLevel = 0
+        defer { startedAt = nil }
+        return startedAt.map { Date().timeIntervalSince($0) } ?? 0
+    }
+
+    func cleanup() { stop() }
+
+    nonisolated private static func installTap(
+        on input: AVAudioInputNode, onSamples: @escaping ([Float]) -> Void,
+        level: @escaping (Double) -> Void) throws
+    {
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0,
+              let target = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false),
+              let converter = AVAudioConverter(from: format, to: target)
+        else { throw RecorderError.couldNotStart }
+        input.installTap(onBus: 0, bufferSize: AVAudioFrameCount(format.sampleRate / 10), format: format) { buffer, _ in
+            let capacity = AVAudioFrameCount(Double(buffer.frameLength) * 16_000 / format.sampleRate) + 32
+            guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else { return }
+            var supplied = false
+            // `.noDataNow` keeps the resampler's state between buffers.
+            converter.convert(to: output, error: nil) { _, status in
+                if supplied { status.pointee = .noDataNow; return nil }
+                supplied = true; status.pointee = .haveData
+                return buffer
+            }
+            guard output.frameLength > 0, let channel = output.floatChannelData?[0] else { return }
+            let samples = Array(UnsafeBufferPointer(start: channel, count: Int(output.frameLength)))
+            onSamples(samples)
+            let power = samples.reduce(0) { $0 + $1 * $1 } / Float(samples.count)
+            let decibels = 10 * log10(max(power, 1e-10))
+            level(pow(max(0, min(1, (Double(decibels) + 55) / 55)), 1.7))
         }
     }
+}
 
-    func stop() throws -> (fileURL: URL, duration: TimeInterval) {
-        guard let recorder, let directoryURL else { throw RecorderError.notRecording }
-        let duration = recorder.currentTime
-        recorder.stop()
-        meterTimer?.invalidate()
-        meterTimer = nil
-        self.recorder = nil
-        state.audioLevel = 0
-        let fileURL = directoryURL.appending(path: "dictation.m4a")
-        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
-        return (fileURL, duration)
-    }
+/// Accumulates samples from the audio thread for the batch fallback model.
+final class SampleBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var samples: [Float] = []
 
-    func cleanup() {
-        meterTimer?.invalidate()
-        meterTimer = nil
-        recorder?.stop()
-        recorder = nil
-        state.audioLevel = 0
-        if let directoryURL { try? FileManager.default.removeItem(at: directoryURL) }
-        directoryURL = nil
-    }
+    func append(_ chunk: [Float]) { lock.withLock { samples += chunk } }
 
-    private func updateMeter() {
-        guard let recorder else { return }
-        recorder.updateMeters()
-        let decibels = recorder.averagePower(forChannel: 0)
-        let normalized = max(0, min(1, (Double(decibels) + 55) / 55))
-        state.audioLevel = pow(normalized, 1.7)
+    /// 16 kHz mono PCM16 WAV of everything captured.
+    func wav() -> Data {
+        let pcm = lock.withLock { samples.map { Int16(max(-1, min(1, $0)) * 32_767).littleEndian } }
+        var data = Data("RIFF".utf8)
+        func append<T>(_ value: T) { withUnsafeBytes(of: value) { data.append(contentsOf: $0) } }
+        append(UInt32(36 + pcm.count * 2).littleEndian)
+        data.append(contentsOf: Array("WAVEfmt ".utf8))
+        append(UInt32(16).littleEndian); append(UInt16(1).littleEndian); append(UInt16(1).littleEndian)
+        append(UInt32(16_000).littleEndian); append(UInt32(32_000).littleEndian)
+        append(UInt16(2).littleEndian); append(UInt16(16).littleEndian)
+        data.append(contentsOf: Array("data".utf8)); append(UInt32(pcm.count * 2).littleEndian)
+        pcm.withUnsafeBytes { data.append(contentsOf: $0) }
+        return data
     }
 }
 
 private enum RecorderError: LocalizedError {
     case couldNotStart
-    case notRecording
 
-    var errorDescription: String? {
-        switch self {
-        case .couldNotStart: return "The microphone could not start recording."
-        case .notRecording: return "No dictation is being recorded."
-        }
-    }
+    var errorDescription: String? { "The microphone could not start recording." }
 }

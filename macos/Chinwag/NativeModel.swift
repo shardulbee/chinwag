@@ -77,14 +77,61 @@ final class NativeModel {
         }
     }
 
-    private static func statusError(_ action: String, _ status: transcribe_status) -> Error {
+    func beginStream(language: String) throws -> NativeStream {
+        guard let pointer else { throw Self.error("transcription model is not loaded") }
+        return try NativeStream(model: pointer, language: language)
+    }
+
+    static func statusError(_ action: String, _ status: transcribe_status) -> Error {
         let detail = transcribe_status_string(Int32(status.rawValue)).map(String.init(cString:)) ?? "unknown error"
         return error("\(action): \(detail) (status \(status.rawValue))")
     }
     private static func statusError(_ action: String, _ status: Int32) -> Error {
         statusError(action, transcribe_status(rawValue: UInt32(status)))
     }
-    private static func error(_ message: String) -> Error {
+    static func error(_ message: String) -> Error {
         NSError(domain: "Chinwag.NativeModel", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+}
+
+/// A streaming session borrowing its model; callers serialize all use and close it before the model.
+final class NativeStream {
+    private var session: OpaquePointer?
+
+    fileprivate init(model: OpaquePointer, language: String) throws {
+        var parameters = transcribe_session_params()
+        transcribe_session_params_init(&parameters)
+        var created: OpaquePointer?
+        var status = transcribe_session_init(model, &parameters, &created)
+        guard status == TRANSCRIBE_OK, let created else { throw NativeModel.statusError("create live session", status) }
+        var run = transcribe_run_params()
+        transcribe_run_params_init(&run)
+        run.timestamps = TRANSCRIBE_TIMESTAMPS_NONE
+        status = language.withCString { value in
+            run.language = value
+            return transcribe_stream_begin(created, &run, nil)
+        }
+        guard status == TRANSCRIBE_OK else {
+            transcribe_session_free(created)
+            throw NativeModel.statusError("begin live stream", status)
+        }
+        session = created
+    }
+
+    deinit { close() }
+    func close() { if let session { transcribe_session_free(session); self.session = nil } }
+
+    func feed(_ samples: [Float]) throws -> String {
+        guard let session else { throw NativeModel.error("live session is closed") }
+        let status = samples.withUnsafeBufferPointer { transcribe_stream_feed(session, $0.baseAddress, Int32($0.count), nil) }
+        guard status == TRANSCRIBE_OK else { throw NativeModel.statusError("transcribe live audio", status) }
+        return transcribe_full_text(session).map { String(cString: $0) } ?? ""
+    }
+
+    func finalize() throws -> String {
+        guard let session else { throw NativeModel.error("live session is closed") }
+        let status = transcribe_stream_finalize(session, nil)
+        guard status == TRANSCRIBE_OK else { throw NativeModel.statusError("finalize live audio", status) }
+        return transcribe_full_text(session).map { String(cString: $0) } ?? ""
     }
 }

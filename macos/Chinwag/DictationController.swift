@@ -148,6 +148,8 @@ final class DictationController {
     private var originatingApplication: pid_t?
     private var originatingFocusedElement: AXUIElement?
     private var originatingScreen: NSScreen?
+    private var live: LiveSession?
+    private var captured: SampleBuffer?
     private var settingsAction: (() -> Void)?
     private var noticeID = UUID()
 
@@ -173,6 +175,7 @@ final class DictationController {
         hotKey.onPress = nil
         hotKey.onRelease = nil
         recorder.cleanup()
+        live?.cancel()
     }
 
     private func beginDictation() {
@@ -196,69 +199,75 @@ final class DictationController {
             originatingScreen = NSScreen.screens.first(where: {
                 $0.frame.contains(NSEvent.mouseLocation)
             })
-            try recorder.start()
+            // Parakeet transcribes while the key is held; the batch fallback transcribes on release.
+            if ModelSpec.selected.id == ModelSpec.parakeet.id {
+                let live = try service.beginLive()
+                self.live = live
+                try recorder.start { live.feed($0) }
+            } else {
+                let captured = SampleBuffer()
+                self.captured = captured
+                try recorder.start { captured.append($0) }
+            }
             state.activity = .recording
             hud.show(.recording, on: originatingScreen)
         } catch {
             showNotice(error.localizedDescription, error: true)
-            hud.show(.error("Microphone could not start"))
+            hud.show(.error(error is TranscriptionFailure ? error.localizedDescription : "Microphone could not start"))
             recorder.cleanup()
+            live?.cancel(); live = nil; captured = nil
         }
     }
 
     private func finishDictation() {
         guard state.activity == .recording else { return }
-        do {
-            let recording = try recorder.stop()
-            guard recording.duration >= 0.2 else {
-                recorder.cleanup()
-                state.activity = .idle
-                hud.show(.error("Recording was too short"))
-                return
-            }
-            state.activity = .transcribing
-            hud.show(.transcribing, on: originatingScreen)
-            Task { [weak self] in
-                guard let self else { return }
-                defer {
-                    self.recorder.cleanup()
-                    self.state.activity = .idle
-                    self.originatingApplication = nil
-                    self.originatingFocusedElement = nil
-                    self.originatingScreen = nil
-                }
-                do {
-                    let text = try await self.service.transcribe(fileURL: recording.fileURL)
-                    self.permissions.refresh()
-                    let currentApplication = NSWorkspace.shared.frontmostApplication?.processIdentifier
-                    let currentFocusedElement = self.focusedElement()
-                    let focusIsUnchanged = self.originatingFocusedElement.map { original in
-                        currentFocusedElement.map { CFEqual(original, $0) } ?? false
-                    } ?? true
-                    if self.permissions.accessibility == .granted,
-                       currentApplication == self.originatingApplication,
-                       focusIsUnchanged,
-                       self.paste(text)
-                    {
-                        self.hud.show(.hidden, on: self.originatingScreen)
-                    } else {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(text, forType: .string)
-                        self.hud.show(.copied, on: self.originatingScreen)
-                        self.showNotice("Focus changed — transcript copied", error: false)
-                    }
-                    await self.service.refresh()
-                } catch {
-                    let message = error.localizedDescription
-                    self.showNotice(message, error: true)
-                    self.hud.show(.error(message), on: self.originatingScreen)
-                }
-            }
-        } catch {
-            recorder.cleanup()
+        let duration = recorder.stop()
+        let live = self.live, captured = self.captured
+        self.live = nil; self.captured = nil
+        guard duration >= 0.2 else {
+            live?.cancel()
             state.activity = .idle
-            showNotice(error.localizedDescription, error: true)
-            hud.show(.error("Recording failed"))
+            hud.show(.error("Recording was too short"))
+            return
+        }
+        state.activity = .transcribing
+        hud.show(.transcribing, on: originatingScreen)
+        Task { [weak self] in
+            guard let self else { return }
+            defer {
+                self.state.activity = .idle
+                self.originatingApplication = nil
+                self.originatingFocusedElement = nil
+                self.originatingScreen = nil
+            }
+            do {
+                let text: String
+                if let live { text = try await self.service.finish(live) }
+                else { text = try await self.service.transcribe(wav: captured?.wav() ?? Data()) }
+                self.permissions.refresh()
+                let currentApplication = NSWorkspace.shared.frontmostApplication?.processIdentifier
+                let currentFocusedElement = self.focusedElement()
+                let focusIsUnchanged = self.originatingFocusedElement.map { original in
+                    currentFocusedElement.map { CFEqual(original, $0) } ?? false
+                } ?? true
+                if self.permissions.accessibility == .granted,
+                   currentApplication == self.originatingApplication,
+                   focusIsUnchanged,
+                   self.paste(text)
+                {
+                    self.hud.show(.hidden, on: self.originatingScreen)
+                } else {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    self.hud.show(.copied, on: self.originatingScreen)
+                    self.showNotice("Focus changed — transcript copied", error: false)
+                }
+                await self.service.refresh()
+            } catch {
+                let message = error.localizedDescription
+                self.showNotice(message, error: true)
+                self.hud.show(.error(message), on: self.originatingScreen)
+            }
         }
     }
 

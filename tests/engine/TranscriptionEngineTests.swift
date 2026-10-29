@@ -64,7 +64,7 @@ enum TranscriptionEngineTests {
         wait(readyModel.entered, "active request holds compute slot")
         var waiting: [TranscriptionCancellation] = []
         let cancelled = DispatchSemaphore(value: 0)
-        for _ in 0..<3 {
+        for _ in 0..<32 {
             let token = TranscriptionCancellation()
             waiting.append(token)
             readyEngine.transcribe(input, cancellation: token) { _ in cancelled.signal() }
@@ -73,14 +73,38 @@ enum TranscriptionEngineTests {
         readyEngine.transcribe(input, cancellation: TranscriptionCancellation()) { result in
             if case .failure(let error) = result {
                 expect((error as? TranscriptionFailure)?.status == 429, "full queue returns 429")
-            } else { expect(false, "fourth waiting request rejected") }
+            } else { expect(false, "request beyond the queue limit rejected") }
             rejected.signal()
         }
         wait(rejected, "queue limit rejects promptly")
         waiting.forEach { $0.cancel() }
-        for _ in 0..<3 { wait(cancelled, "cancel queued request") }
+        for _ in 0..<32 { wait(cancelled, "cancel queued request") }
+        // Live sessions queue behind active batch work instead of being rejected, and stay independent.
+        let liveDone = DispatchSemaphore(value: 0)
+        var finals: [String] = [], partials: [String] = []
+        for count in [3, 1] {
+            let live = try readyEngine.beginLive()
+            live.feed(Array(repeating: 0, count: count)) { partials.append($0) }
+            live.finish { result in finals.append((try? result.get()) ?? "failed"); liveDone.signal() }
+        }
+        do { _ = try readyEngine.beginLive(model: "unknown"); expect(false, "unknown live model rejected") }
+        catch { expect((error as? TranscriptionFailure)?.status == 404, "unknown live model is 404") }
+        expect((readyEngine.liveModels().first?["default"] as? Bool) == true, "Parakeet is the default live model")
         readyModel.release.signal()
         wait(readyDone, "successful completion")
+        wait(liveDone, "first live session finalizes"); wait(liveDone, "second live session finalizes")
+        expect(partials == ["3", "1"], "partials are cleaned per session: \(partials)")
+        expect(finals == ["I heard the 3 samples.", "I heard the 1 samples."], "finals are cleaned per session: \(finals)")
+
+        for (raw, clean) in [
+            ("Um, I I think the the plan is, uh, fine.", "I think the plan is, fine."),
+            ("Okay, um, here it is, uh.", "Okay, here it is."),
+            ("Uh, hmm, okay.", "Okay."),
+            ("Hello there er friend", "Hello there friend"),
+            ("Go. Go now, Parakeet, i.e. Q3.", "Go. Go now, Parakeet, i.e. Q3."),
+        ] {
+            expect(TranscriptCleaner.clean(raw) == clean, "clean \(raw) -> \(TranscriptCleaner.clean(raw))")
+        }
         readyEngine.shutdown()
         print("TranscriptionEngineTests passed")
     }

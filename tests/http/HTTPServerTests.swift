@@ -23,6 +23,15 @@ final class TranscriptionEngine {
         #endif
     }
 }
+final class LiveSession {
+    func feed(_ samples: [Float], partial: ((String) -> Void)? = nil) { partial?("\(samples.count) samples") }
+    func finish(_ completion: @escaping (Result<String, Error>) -> Void) { completion(.success("done")) }
+    func cancel() {}
+}
+extension TranscriptionEngine {
+    func liveModels() -> [[String: Any]] { [["id": "test", "state": "ready", "default": true]] }
+    func beginLive(model: String?) throws -> LiveSession { LiveSession() }
+}
 extension NSLock {
     func withLock<T>(_ body: () throws -> T) rethrows -> T { lock(); defer { unlock() }; return try body() }
 }

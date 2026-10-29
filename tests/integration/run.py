@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real Metal/API smoke test. Optionally compare an existing server with --baseline URL."""
 import argparse
+import concurrent.futures
 import json
 import pathlib
 import statistics
@@ -10,13 +11,16 @@ import time
 import urllib.error
 import urllib.request
 
+import live
+
 root = pathlib.Path(__file__).resolve().parents[2]
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--baseline')
 parser.add_argument('--repetitions', type=int, default=8)
+parser.add_argument('--batch-model', default='parakeet-unified-en-0.6b', help='dictation and batch model setting')
 args = parser.parse_args()
-model = pathlib.Path.home() / '.local/share/chinwag/models/cohere-transcribe-03-2026-Q4_K_M.gguf'
-assert model.is_file(), 'Install the model by launching Chinwag first'
+models = pathlib.Path.home() / '.local/share/chinwag/models'
+assert (models / 'parakeet-unified-en-0.6b-Q8_0.gguf').is_file(), 'Install the model by launching Chinwag first'
 native = root / 'artifacts/transcribe-native-macos-arm64-metal'
 swift = root / 'macos/Chinwag'
 
@@ -57,9 +61,10 @@ with tempfile.TemporaryDirectory(prefix='chinwag-integration-') as directory:
                     *[str(swift / name) for name in ['AudioDecoder.swift', 'NativeModel.swift',
                       'TranscriptionEngine.swift', 'TranscriptionHTTPServer.swift']],
                     str(root / 'tests/integration/EngineHost.swift'), '-o', str(directory / 'host')], check=True)
-    host = subprocess.Popen([str(directory / 'host'), str(model), str(native)], stdin=subprocess.PIPE)
+    host = subprocess.Popen([str(directory / 'host'), str(models), str(native), '-transcriptionModel', args.batch_model],
+                            stdin=subprocess.PIPE)
     try:
-        base = 'http://127.0.0.1:3213'
+        base = 'http://127.0.0.1:3219'
         for _ in range(240):
             assert host.poll() is None, 'engine host exited'
             try:
@@ -90,7 +95,20 @@ with tempfile.TemporaryDirectory(prefix='chinwag-integration-') as directory:
             transcribe(base, contents, format)
         if args.baseline:
             assert transcripts['swift'] == transcripts['baseline'], 'transcripts differ'
-        print(json.dumps({'audioSeconds': health(base)['lastTranscription']['audioSeconds'],
+        with urllib.request.urlopen(base + '/v1/live/models', timeout=2) as response:
+            assert json.load(response)['data'] == [{'id': 'parakeet-unified-en-0.6b', 'state': 'ready', 'default': True}]
+        # Two live streams and a batch request overlap on the one warm model; none may be rejected.
+        with concurrent.futures.ThreadPoolExecutor(3) as pool:
+            streams = [pool.submit(live.stream, 'ws://127.0.0.1:3219/v1/live?model=parakeet-unified-en-0.6b',
+                                   str(audio), realtime=False) for _ in range(2)]
+            batch = pool.submit(transcribe, base, contents)
+            results = [future.result() for future in streams]
+            batch.result()
+        for result in results:
+            assert result['finals'] == 1 and result['partials'] > 0 and 'error' not in result, result
+            assert 'recording' in result['text'].lower(), result
+        assert live.stream('ws://127.0.0.1:3219/v1/live?model=unknown', str(audio), realtime=False)['error']
+        print(json.dumps({'live': {key: results[0][key] for key in ['partials', 'endToFinalMs', 'text']},'audioSeconds': health(base)['lastTranscription']['audioSeconds'],
                           'warmRequestMs': timings,
                           'medianMs': {name: round(statistics.median(values), 1) for name, values in timings.items()},
                           'matchingTranscripts': not args.baseline or transcripts['swift'] == transcripts['baseline']}, indent=2))

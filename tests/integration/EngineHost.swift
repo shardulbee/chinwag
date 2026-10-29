@@ -5,9 +5,9 @@ import Foundation
 enum EngineHost {
     static func main() throws {
         let engine = TranscriptionEngine()
-        let server = TranscriptionHTTPServer(engine: engine, port: 3213)
+        let server = TranscriptionHTTPServer(engine: engine, port: 3219)
         try server.start()
-        engine.start(modelURL: URL(fileURLWithPath: CommandLine.arguments[1]),
+        engine.start(modelsDirectory: URL(fileURLWithPath: CommandLine.arguments[1]),
                      libraryURL: URL(fileURLWithPath: CommandLine.arguments[2]))
         _ = readLine()
         server.stop()

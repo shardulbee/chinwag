@@ -193,6 +193,8 @@ struct TranscriptionSettingsView: View {
     @ObservedObject var permissions: PermissionManager
     @ObservedObject var hotKey: GlobalHotKey
     let retryModelDownload: () -> Void
+    let modelChanged: () -> Void
+    @AppStorage(ModelSpec.settingKey) private var model = ModelSpec.parakeet.id
 
     var body: some View {
         Form {
@@ -225,7 +227,21 @@ struct TranscriptionSettingsView: View {
             Section("Model") {
                 HStack(alignment: .center) {
                     SettingsLabel(
-                        title: "Cohere Transcribe 03-2026 · Q4",
+                        title: "Dictation Model",
+                        caption: "Parakeet streams while you speak. Live API clients always use Parakeet.")
+                    Spacer(minLength: 18)
+                    Picker("", selection: $model) {
+                        Text("Parakeet Unified").tag(ModelSpec.parakeet.id)
+                        Text("Cohere (fallback)").tag(ModelSpec.cohere.id)
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                    .onChange(of: model) { modelChanged() }
+                }
+                .padding(.vertical, 2)
+                HStack(alignment: .center) {
+                    SettingsLabel(
+                        title: (model == ModelSpec.cohere.id ? ModelSpec.cohere : ModelSpec.parakeet).displayName,
                         caption: "Downloaded once and stored on this Mac.")
                     Spacer(minLength: 18)
                     modelStatus
@@ -234,7 +250,7 @@ struct TranscriptionSettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 500, height: 420)
+        .frame(width: 500, height: 480)
     }
 
     @ViewBuilder private var modelStatus: some View {
